@@ -3,11 +3,25 @@ import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
 export const dynamic = "force-dynamic";
 
+function resolveBlobToken(): string | undefined {
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    return process.env.BLOB_READ_WRITE_TOKEN;
+  }
+  const altKey = Object.keys(process.env).find(
+    (k) => k.endsWith("_READ_WRITE_TOKEN") && k.toUpperCase().includes("BLOB")
+  );
+  return altKey ? process.env[altKey] : undefined;
+}
+
 export async function GET() {
-  const hasToken = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  const token = resolveBlobToken();
+  const blobEnvKeys = Object.keys(process.env).filter((k) =>
+    k.toUpperCase().includes("BLOB")
+  );
   return NextResponse.json(
     {
-      blobEnabled: hasToken,
+      blobEnabled: Boolean(token || process.env.BLOB_STORE_ID),
+      blobEnvKeys,
       runtime: process.env.VERCEL ? "vercel" : "local",
     },
     {
@@ -17,7 +31,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  const token = resolveBlobToken();
+  if (!token && !process.env.BLOB_STORE_ID) {
     return NextResponse.json(
       { error: "متغير BLOB_READ_WRITE_TOKEN غير موجود في بيئة المشروع على Vercel." },
       { status: 400 }
@@ -27,6 +42,7 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as HandleUploadBody;
     const jsonResponse = await handleUpload({
+      token,
       body,
       request,
       onBeforeGenerateToken: async () => {

@@ -8,8 +8,18 @@ import { buildDemoSeedOrder } from "./sample-seed";
 const BLOB_ORDERS_PREFIX = "acad-solver/orders/";
 const BLOB_UPLOADS_PREFIX = "acad-solver/uploads/";
 
+function resolveBlobToken(): string | undefined {
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    return process.env.BLOB_READ_WRITE_TOKEN;
+  }
+  const altKey = Object.keys(process.env).find(
+    (k) => k.endsWith("_READ_WRITE_TOKEN") && k.toUpperCase().includes("BLOB")
+  );
+  return altKey ? process.env[altKey] : undefined;
+}
+
 function useVercelBlob(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(resolveBlobToken() || process.env.BLOB_STORE_ID);
 }
 
 // ---------- Local / Fallback Filesystem Helpers ----------
@@ -53,11 +63,12 @@ async function saveOrderToBlob(order: StudentOrder): Promise<void> {
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: "application/json; charset=utf-8",
+    token: resolveBlobToken(),
   });
 }
 
 async function listOrdersFromBlob(): Promise<StudentOrder[]> {
-  const { blobs } = await list({ prefix: BLOB_ORDERS_PREFIX });
+  const { blobs } = await list({ prefix: BLOB_ORDERS_PREFIX, token: resolveBlobToken() });
   if (blobs.length === 0) {
     const demo = buildDemoSeedOrder();
     await saveOrderToBlob(demo);
@@ -128,6 +139,7 @@ export async function saveUploadedFile(
       addRandomSuffix: false,
       allowOverwrite: true,
       contentType: mimeType,
+      token: resolveBlobToken(),
     });
     return {
       id,
@@ -169,7 +181,7 @@ export async function readUploadedFileBuffer(
   }
 
   if (useVercelBlob()) {
-    const { blobs } = await list({ prefix: `${BLOB_UPLOADS_PREFIX}${path.basename(storedName)}` });
+    const { blobs } = await list({ prefix: `${BLOB_UPLOADS_PREFIX}${path.basename(storedName)}`, token: resolveBlobToken() });
     const match = blobs[0];
     if (!match) return null;
     try {
@@ -254,10 +266,10 @@ export async function deleteOrder(id: string): Promise<boolean> {
     for (const f of target.files) {
       if (f.blobUrl) urlsToDelete.push(f.blobUrl);
     }
-    const { blobs } = await list({ prefix: `${BLOB_ORDERS_PREFIX}${id}.json` });
+    const { blobs } = await list({ prefix: `${BLOB_ORDERS_PREFIX}${id}.json`, token: resolveBlobToken() });
     for (const b of blobs) urlsToDelete.push(b.url);
     if (urlsToDelete.length > 0) {
-      await del(urlsToDelete).catch(() => {});
+      await del(urlsToDelete, { token: resolveBlobToken() }).catch(() => {});
     }
     return true;
   }
