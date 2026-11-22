@@ -11,6 +11,65 @@ const SUPPORTED_INLINE_MIMES = new Set([
   "text/csv",
 ]);
 
+const DEFAULT_MODEL_PRIORITY = [
+  "gemini-3.5-flash-lite",
+  "gemini-4-hydrogen",
+  "gemini-3.8-flash",
+];
+
+const MODEL_DISPLAY_PATTERNS: Record<string, string[]> = {
+  "gemini-3.5-flash-lite": ["gemini 3.5 flash lite", "gemini-3.5-flash-lite"],
+  "gemini-4-hydrogen": ["gemini 4 hydrogen", "gemini-4-hydrogen"],
+  "gemini-3.8-flash": ["gemini 3.8 flash", "gemini-3.8-flash"],
+};
+
+async function discoverExactModelIds(
+  apiKey: string,
+  preferredList: string[]
+): Promise<string[]> {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(
+        apiKey
+      )}`
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      models?: Array<{
+        name?: string;
+        displayName?: string;
+        supportedGenerationMethods?: string[];
+      }>;
+    };
+    const usable = (data.models ?? []).filter((m) =>
+      m.supportedGenerationMethods?.includes("generateContent")
+    );
+
+    const matched: string[] = [];
+    for (const pref of preferredList) {
+      const patterns = MODEL_DISPLAY_PATTERNS[pref] ?? [
+        pref.toLowerCase(),
+        pref.toLowerCase().replace(/-/g, " "),
+      ];
+      for (const m of usable) {
+        const id = (m.name ?? "").replace(/^models\//, "");
+        const disp = (m.displayName ?? "").toLowerCase();
+        const idLow = id.toLowerCase();
+        if (
+          patterns.some((p) => disp === p || idLow === p || disp.includes(p) || idLow.includes(p))
+        ) {
+          if (id && !matched.includes(id)) {
+            matched.push(id);
+          }
+        }
+      }
+    }
+    return matched;
+  } catch {
+    return [];
+  }
+}
+
 async function uploadToGeminiFilesApi(
   apiKey: string,
   buf: Buffer,
@@ -18,7 +77,6 @@ async function uploadToGeminiFilesApi(
   displayName: string
 ): Promise<string | null> {
   try {
-    // 1. Start resumable upload session
     const initRes = await fetch(
       `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(
         apiKey
@@ -38,7 +96,6 @@ async function uploadToGeminiFilesApi(
     const uploadUrl = initRes.headers.get("x-goog-upload-url");
     if (!initRes.ok || !uploadUrl) return null;
 
-    // 2. Upload binary bytes
     const upRes = await fetch(uploadUrl, {
       method: "POST",
       headers: {
@@ -92,16 +149,21 @@ ${extraInstruction ? `\nتوجيه إضافي من المشرف:\n${extraInstruc
 
 export async function generateSolutionWithGemini(
   order: StudentOrder,
-  extraInstruction?: string
-): Promise<SolutionDocument> {
+  extraInstruction?: string,
+  preferredModel?: string
+): Promise<{ solution: SolutionDocument; usedModel: string }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "لم يتم ضبط مفتاح GEMINI_API_KEY في ملف البيئة (.env.local). يمكنك إضافته لتفعيل التوليد التلقائي بالذكاء الاصطناعي، أو تحرير الحل يدويا من المحرر أدناه."
+      "لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة. يرجى إضافته لتفعيل التوليد الآلي بالذكاء الاصطناعي."
     );
   }
 
-  const configuredModel = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  const firstChoice =
+    preferredModel?.trim() ||
+    process.env.GEMINI_MODEL?.trim() ||
+    "gemini-3.5-flash-lite";
+
   const parts: Array<Record<string, unknown>> = [];
 
   const contextLines = [
@@ -131,7 +193,6 @@ export async function generateSolutionWithGemini(
     } else if (SUPPORTED_INLINE_MIMES.has(meta.mimeType)) {
       parts.push({ text: label });
       if (buf.length > 2 * 1024 * 1024) {
-        // Use Gemini Files API for large PDFs/images (supports up to 50 MB per file)
         const fileUri = await uploadToGeminiFilesApi(
           apiKey,
           buf,
@@ -179,12 +240,11 @@ export async function generateSolutionWithGemini(
     },
   });
 
-  const candidateModels = Array.from(
-    new Set([configuredModel, "gemini-3.8-flash", "gemini-flash-latest"])
-  );
-
+  const candidateModels = Array.from(new Set([firstChoice, ...DEFAULT_MODEL_PRIORITY]));
+  let discoveredOnce = false;
   let response: Response | null = null;
   let lastErrorText = "";
+  let usedModel = firstChoice;
 
   for (let i = 0; i < candidateModels.length; i++) {
     const modelName = candidateModels[i];
@@ -198,20 +258,30 @@ export async function generateSolutionWithGemini(
       body: requestPayload,
     });
 
-    if (response.ok) break;
+    if (response.ok) {
+      usedModel = modelName;
+      break;
+    }
 
     lastErrorText = await response.text();
-    // If Gemini recommends a newer model in the 404 message, try it immediately
-    if (response.status === 404) {
-      const suggested = lastErrorText.match(/models\/([a-zA-Z0-9._-]+)/g);
-      if (suggested) {
-        for (const s of suggested) {
-          const cleanName = s.replace(/^models\//, "");
-          if (cleanName !== modelName && !candidateModels.includes(cleanName)) {
-            candidateModels.splice(i + 1, 0, cleanName);
-          }
+
+    // If model slug not found (e.g. requires -preview suffix), discover exact live IDs from Google's models list
+    if (response.status === 404 && !discoveredOnce) {
+      discoveredOnce = true;
+      const discovered = await discoverExactModelIds(apiKey, [
+        firstChoice,
+        ...DEFAULT_MODEL_PRIORITY,
+      ]);
+      for (let dIdx = discovered.length - 1; dIdx >= 0; dIdx--) {
+        const exactId = discovered[dIdx];
+        if (!candidateModels.includes(exactId)) {
+          candidateModels.splice(i + 1, 0, exactId);
         }
       }
+    }
+
+    // Fallback to next candidate model on 404 (unavailable/retired) or 429 (quota/rate limit)
+    if (response.status === 404 || response.status === 429) {
       continue;
     }
     break;
@@ -219,7 +289,7 @@ export async function generateSolutionWithGemini(
 
   if (!response || !response.ok) {
     throw new Error(
-      `فشل الاتصال بـ Gemini API (${response?.status ?? 500}): ${lastErrorText.slice(0, 300)}`
+      `فشل الاتصال بـ Gemini API (${response?.status ?? 500}): ${lastErrorText.slice(0, 350)}`
     );
   }
 
@@ -232,7 +302,6 @@ export async function generateSolutionWithGemini(
     throw new Error("لم يُرجع نموذج الذكاء الاصطناعي أي محتوى نصي.");
   }
 
-  // Strip accidental markdown fences if any
   const cleaned = rawText
     .trim()
     .replace(/^```json\s*/i, "")
@@ -279,7 +348,7 @@ export async function generateSolutionWithGemini(
     return { id, type: "paragraph", text: String(b.text ?? "") };
   });
 
-  return {
+  const solution: SolutionDocument = {
     title: parsed.title || `حل ${order.assignmentTitle}`,
     includeCoverPage: order.includeCoverPage,
     coverMeta: {
@@ -292,4 +361,6 @@ export async function generateSolutionWithGemini(
     blocks,
     updatedAt: new Date().toISOString(),
   };
+
+  return { solution, usedModel };
 }

@@ -30,6 +30,7 @@ export default function AdminOrderWorkspacePage({
   const [status, setStatus] = useState<OrderStatus>("pending");
   const [adminNote, setAdminNote] = useState("");
   const [extraInstruction, setExtraInstruction] = useState("");
+  const [selectedModel, setSelectedModel] = useState("gemini-3.5-flash-lite");
   const [activeTab, setActiveTab] = useState<"preview" | "edit">("preview");
 
   const [loading, setLoading] = useState(true);
@@ -111,7 +112,7 @@ export default function AdminOrderWorkspacePage({
       const res = await fetch(`/api/orders/${order.id}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ extraInstruction }),
+        body: JSON.stringify({ extraInstruction, model: selectedModel }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "فشل توليد الحل آليا.");
@@ -121,7 +122,7 @@ export default function AdminOrderWorkspacePage({
       setActiveTab("preview");
       setMessage({
         type: "ok",
-        text: "تم توليد مسودة الحل بنجاح. راجعها وعدّل ما يلزم ثم اعتمد التسليم.",
+        text: `تم توليد مسودة الحل بنجاح عبر النموذج (${data.usedModel || selectedModel}). راجعها وعدّل ما يلزم ثم اعتمد التسليم.`,
       });
     } catch (err) {
       setMessage({
@@ -340,6 +341,26 @@ export default function AdminOrderWorkspacePage({
             <p className="text-xs text-slate-600 leading-relaxed">
               يقرأ ملفات التمرين والمراجع المرفوعة، ويولّد مسودة حل كاملة مهيكلة بالجداول والمعادلات لتراجعها وتعتمدها.
             </p>
+            <div>
+              <label className="block text-xs font-bold text-slate-600 mb-1">
+                النموذج المستخدم
+              </label>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-navy-600"
+              >
+                <option value="gemini-3.5-flash-lite">
+                  Gemini 3.5 Flash Lite (الافتراضي — 15 RPM / 500 يوميا)
+                </option>
+                <option value="gemini-4-hydrogen">
+                  Gemini 4 Hydrogen (الأحدث والأقوى — 5 RPM / 20 يوميا)
+                </option>
+                <option value="gemini-3.8-flash">
+                  Gemini 3.8 Flash (بديل — 5 RPM / 20 يوميا)
+                </option>
+              </select>
+            </div>
             <textarea
               rows={2}
               value={extraInstruction}
