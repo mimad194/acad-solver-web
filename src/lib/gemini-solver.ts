@@ -12,15 +12,15 @@ const SUPPORTED_INLINE_MIMES = new Set([
 ]);
 
 const DEFAULT_MODEL_PRIORITY = [
-  "gemini-3.5-flash-lite",
   "gemini-4-hydrogen",
   "gemini-3.8-flash",
+  "gemini-3.5-flash-lite",
 ];
 
 const MODEL_DISPLAY_PATTERNS: Record<string, string[]> = {
-  "gemini-3.5-flash-lite": ["gemini 3.5 flash lite", "gemini-3.5-flash-lite"],
   "gemini-4-hydrogen": ["gemini 4 hydrogen", "gemini-4-hydrogen"],
   "gemini-3.8-flash": ["gemini 3.8 flash", "gemini-3.8-flash"],
+  "gemini-3.5-flash-lite": ["gemini 3.5 flash lite", "gemini-3.5-flash-lite"],
 };
 
 async function discoverExactModelIds(
@@ -162,7 +162,7 @@ export async function generateSolutionWithGemini(
   const firstChoice =
     preferredModel?.trim() ||
     process.env.GEMINI_MODEL?.trim() ||
-    "gemini-3.5-flash-lite";
+    "gemini-4-hydrogen";
 
   const parts: Array<Record<string, unknown>> = [];
 
