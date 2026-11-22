@@ -65,13 +65,20 @@ export default function StudentOrderPage() {
       // Check whether direct Vercel Blob client upload is enabled (bypasses 4.5 MB Serverless Function limit)
       let blobEnabled = false;
       try {
-        const cfgRes = await fetch("/api/upload");
+        const cfgRes = await fetch("/api/upload", { cache: "no-store" });
         if (cfgRes.ok) {
           const cfg = (await cfgRes.json()) as { blobEnabled?: boolean };
           blobEnabled = Boolean(cfg.blobEnabled);
         }
       } catch {
         blobEnabled = false;
+      }
+
+      const totalBytes = allFiles.reduce((acc, item) => acc + item.file.size, 0);
+      if (!blobEnabled && totalBytes > 4 * 1024 * 1024) {
+        throw new Error(
+          `إجمالي حجم الملفات (${(totalBytes / (1024 * 1024)).toFixed(1)} MB) يتجاوز 4 MB بينما متغير BLOB_READ_WRITE_TOKEN غير متصل بهذا النشر على Vercel. يرجى التأكد من ربط مخزن Vercel Blob (acad-solver-blob) من تبويب Storage في المشروع وإعادة النشر (Redeploy).`
+        );
       }
 
       let res: Response;

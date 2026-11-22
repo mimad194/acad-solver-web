@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getOrderByTrackingCode } from "@/lib/store";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const code = searchParams.get("code")?.trim();

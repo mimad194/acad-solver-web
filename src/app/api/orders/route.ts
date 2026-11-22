@@ -3,6 +3,8 @@ import { createOrder, listOrders, saveUploadedFile } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
 import { UploadedFileMeta } from "@/types/order";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const ok = await isAdminAuthenticated();
   if (!ok) {

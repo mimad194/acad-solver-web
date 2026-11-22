@@ -1,16 +1,25 @@
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
-  return NextResponse.json({
-    blobEnabled: Boolean(process.env.BLOB_READ_WRITE_TOKEN),
-  });
+  const hasToken = Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return NextResponse.json(
+    {
+      blobEnabled: hasToken,
+      runtime: process.env.VERCEL ? "vercel" : "local",
+    },
+    {
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    }
+  );
 }
 
 export async function POST(request: Request) {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
     return NextResponse.json(
-      { error: "التخزين السحابي Vercel Blob غير مفعّل." },
+      { error: "متغير BLOB_READ_WRITE_TOKEN غير موجود في بيئة المشروع على Vercel." },
       { status: 400 }
     );
   }
@@ -38,7 +47,7 @@ export async function POST(request: Request) {
         };
       },
       onUploadCompleted: async () => {
-        // Order metadata is persisted by POST /api/orders right after client upload completes
+        // Order metadata is saved by POST /api/orders right after direct upload completes
       },
     });
     return NextResponse.json(jsonResponse);
