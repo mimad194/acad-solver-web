@@ -101,7 +101,7 @@ export async function generateSolutionWithGemini(
     );
   }
 
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+  const configuredModel = process.env.GEMINI_MODEL?.trim() || "gemini-3.8-flash";
   const parts: Array<Record<string, unknown>> = [];
 
   const contextLines = [
@@ -168,28 +168,59 @@ export async function generateSolutionWithGemini(
     text: "قم الآن بحل التمرين كاملا وإرجاع JSON المهيكَل فقط وفق المخطط المطلوب.",
   });
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    model
-  )}:generateContent?key=${encodeURIComponent(apiKey)}`;
-
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: buildSystemInstruction(order, extraInstruction) }],
-      },
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        temperature: 0.2,
-        responseMimeType: "application/json",
-      },
-    }),
+  const requestPayload = JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: buildSystemInstruction(order, extraInstruction) }],
+    },
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: "application/json",
+    },
   });
 
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`فشل الاتصال بـ Gemini API (${response.status}): ${errText.slice(0, 300)}`);
+  const candidateModels = Array.from(
+    new Set([configuredModel, "gemini-3.8-flash", "gemini-flash-latest"])
+  );
+
+  let response: Response | null = null;
+  let lastErrorText = "";
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelName = candidateModels[i];
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      modelName
+    )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: requestPayload,
+    });
+
+    if (response.ok) break;
+
+    lastErrorText = await response.text();
+    // If Gemini recommends a newer model in the 404 message, try it immediately
+    if (response.status === 404) {
+      const suggested = lastErrorText.match(/models\/([a-zA-Z0-9._-]+)/g);
+      if (suggested) {
+        for (const s of suggested) {
+          const cleanName = s.replace(/^models\//, "");
+          if (cleanName !== modelName && !candidateModels.includes(cleanName)) {
+            candidateModels.splice(i + 1, 0, cleanName);
+          }
+        }
+      }
+      continue;
+    }
+    break;
+  }
+
+  if (!response || !response.ok) {
+    throw new Error(
+      `فشل الاتصال بـ Gemini API (${response?.status ?? 500}): ${lastErrorText.slice(0, 300)}`
+    );
   }
 
   const payload = (await response.json()) as {
