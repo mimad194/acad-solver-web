@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { isFirebaseConfigured } from "@/lib/firebase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,7 @@ export async function GET() {
   return NextResponse.json(
     {
       blobEnabled: Boolean(token || process.env.BLOB_STORE_ID),
+      firestoreEnabled: isFirebaseConfigured(),
       blobEnvKeys,
       runtime: process.env.VERCEL ? "vercel" : "local",
     },

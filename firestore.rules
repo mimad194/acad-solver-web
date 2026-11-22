@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model & Architecture
+// ===============================================================
+//
+// Application: acad-solver-web (Next.js App Router)
+// Access Architecture: SERVER-ONLY via Firebase Admin SDK (`firebase-admin`)
+//
+// ALL Firestore reads and writes are performed exclusively from Next.js
+// server-side API Route Handlers using the Firebase Admin SDK. Because the
+// Admin SDK authenticates with privileged IAM service-account credentials, it
+// bypasses Cloud Firestore Security Rules.
+//
+// No direct browser/client Firestore SDK access or Firebase Auth client tokens
+// are used anywhere in this application. Consequently, ALL client-side access
+// is strictly denied to provide defense-in-depth protection for student PII
+// and private academic assignment orders.
+//
+// Note: Because Admin SDK requests bypass these rules, all request
+// authorization (e.g., admin session cookie checks, tracking code lookup) and
+// schema/payload validation MUST be enforced inside the Next.js API Route
+// Handlers.
+//
+// Collection: orders
+// Document ID: {orderId} (UUID string)
+// Contains PII: YES (studentName, contact, university, specialty)
+// Fields:
+//   - id: string (required, immutable, UUID matching orderId)
+//   - trackingCode: string (required, immutable, e.g. "ORD-2026-1042")
+//   - studentName: string (required, PII)
+//   - contact: string (required, PII - email or phone number)
+//   - university: string (required, PII)
+//   - specialty: string (required)
+//   - moduleName: string (required)
+//   - assignmentTitle: string (required)
+//   - exerciseText: string (optional/empty string)
+//   - notes: string (optional/empty string)
+//   - includeCoverPage: bool (required)
+//   - strictReferencesOnly: bool (required)
+//   - status: string (required, enum: "pending" | "in_review" | "completed")
+//   - adminNote: string (optional/empty string, internal admin notes)
+//   - files: list<map> (required, UploadedFileMeta metadata objects)
+//   - solution: map | null (optional, SolutionDocument with blocks & coverMeta)
+//   - createdAt: string (required, immutable, ISO 8601 timestamp)
+//   - updatedAt: string (required, ISO 8601 timestamp)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Student assignment orders (contains student PII and private solutions).
+    // Strictly deny all direct client-side reads and writes; accessed
+    // exclusively by Next.js API Route Handlers via `firebase-admin`.
+    match /orders/{orderId} {
+      allow read, write: if false;
+    }
+
+    // Default deny: block all client-side reads and writes across every
+    // collection and subcollection in the database.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

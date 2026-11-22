@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@vercel/blob": "^2.9.0",
+    "firebase-admin": "^14.5.1",
     "jszip": "^3.10.1",
     "katex": "^0.16.21",
     "lucide-react": "^0.475.0",

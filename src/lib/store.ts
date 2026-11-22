@@ -4,7 +4,9 @@ import crypto from "crypto";
 import { del, list, put } from "@vercel/blob";
 import { StudentOrder, UploadedFileMeta } from "@/types/order";
 import { buildDemoSeedOrder } from "./sample-seed";
+import { getFirestoreDb } from "./firebase-admin";
 
+const ORDERS_COLLECTION = "orders";
 const BLOB_ORDERS_PREFIX = "acad-solver/orders/";
 const BLOB_UPLOADS_PREFIX = "acad-solver/uploads/";
 
@@ -55,6 +57,19 @@ async function writeLocalOrders(orders: StudentOrder[]): Promise<void> {
   await fs.writeFile(getOrdersFile(), JSON.stringify(orders, null, 2), "utf-8");
 }
 
+// ---------- Firestore Helpers ----------
+
+async function listOrdersFromFirestore(): Promise<StudentOrder[]> {
+  const db = getFirestoreDb()!;
+  const snap = await db.collection(ORDERS_COLLECTION).orderBy("createdAt", "desc").get();
+  if (snap.empty) {
+    const demo = buildDemoSeedOrder();
+    await db.collection(ORDERS_COLLECTION).doc(demo.id).set(demo);
+    return [demo];
+  }
+  return snap.docs.map((d) => d.data() as StudentOrder);
+}
+
 // ---------- Vercel Blob Helpers ----------
 
 async function saveOrderToBlob(order: StudentOrder): Promise<void> {
@@ -97,6 +112,9 @@ async function listOrdersFromBlob(): Promise<StudentOrder[]> {
 // ---------- Public Store API ----------
 
 export async function listOrders(): Promise<StudentOrder[]> {
+  if (getFirestoreDb()) {
+    return listOrdersFromFirestore();
+  }
   if (useVercelBlob()) {
     return listOrdersFromBlob();
   }
@@ -107,12 +125,38 @@ export async function listOrders(): Promise<StudentOrder[]> {
 }
 
 export async function getOrderById(id: string): Promise<StudentOrder | null> {
+  const db = getFirestoreDb();
+  if (db) {
+    const doc = await db.collection(ORDERS_COLLECTION).doc(id).get();
+    return doc.exists ? (doc.data() as StudentOrder) : null;
+  }
   const orders = await listOrders();
   return orders.find((o) => o.id === id) ?? null;
 }
 
 export async function getOrderByTrackingCode(code: string): Promise<StudentOrder | null> {
   const normalized = code.trim().toUpperCase();
+  const db = getFirestoreDb();
+  if (db) {
+    // Ensure demo order exists if collection is brand new
+    const snap = await db
+      .collection(ORDERS_COLLECTION)
+      .where("trackingCode", "==", normalized)
+      .limit(1)
+      .get();
+    if (!snap.empty) {
+      return snap.docs[0].data() as StudentOrder;
+    }
+    if (normalized === "UFC-2026-1001") {
+      const anyDoc = await db.collection(ORDERS_COLLECTION).limit(1).get();
+      if (anyDoc.empty) {
+        const demo = buildDemoSeedOrder();
+        await db.collection(ORDERS_COLLECTION).doc(demo.id).set(demo);
+        return demo;
+      }
+    }
+    return null;
+  }
   const orders = await listOrders();
   return orders.find((o) => o.trackingCode.toUpperCase() === normalized) ?? null;
 }
@@ -181,7 +225,10 @@ export async function readUploadedFileBuffer(
   }
 
   if (useVercelBlob()) {
-    const { blobs } = await list({ prefix: `${BLOB_UPLOADS_PREFIX}${path.basename(storedName)}`, token: resolveBlobToken() });
+    const { blobs } = await list({
+      prefix: `${BLOB_UPLOADS_PREFIX}${path.basename(storedName)}`,
+      token: resolveBlobToken(),
+    });
     const match = blobs[0];
     if (!match) return null;
     try {
@@ -209,8 +256,35 @@ export async function createOrder(
     "id" | "trackingCode" | "status" | "adminNote" | "solution" | "createdAt" | "updatedAt"
   >
 ): Promise<StudentOrder> {
-  const orders = await listOrders();
   const now = new Date().toISOString();
+  const db = getFirestoreDb();
+
+  if (db) {
+    let code = generateTrackingCode();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const exists = await db
+        .collection(ORDERS_COLLECTION)
+        .where("trackingCode", "==", code)
+        .limit(1)
+        .get();
+      if (exists.empty) break;
+      code = generateTrackingCode();
+    }
+    const order: StudentOrder = {
+      ...data,
+      id: crypto.randomUUID(),
+      trackingCode: code,
+      status: "pending",
+      adminNote: "",
+      solution: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.collection(ORDERS_COLLECTION).doc(order.id).set(order);
+    return order;
+  }
+
+  const orders = await listOrders();
   let code = generateTrackingCode();
   while (orders.some((o) => o.trackingCode === code)) {
     code = generateTrackingCode();
@@ -240,6 +314,17 @@ export async function updateOrder(
   id: string,
   updater: (current: StudentOrder) => StudentOrder
 ): Promise<StudentOrder | null> {
+  const db = getFirestoreDb();
+  if (db) {
+    const ref = db.collection(ORDERS_COLLECTION).doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return null;
+    const updated = updater(snap.data() as StudentOrder);
+    updated.updatedAt = new Date().toISOString();
+    await ref.set(updated);
+    return updated;
+  }
+
   const orders = await listOrders();
   const idx = orders.findIndex((o) => o.id === id);
   if (idx === -1) return null;
@@ -257,6 +342,22 @@ export async function updateOrder(
 }
 
 export async function deleteOrder(id: string): Promise<boolean> {
+  const db = getFirestoreDb();
+  if (db) {
+    const ref = db.collection(ORDERS_COLLECTION).doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) return false;
+    const target = snap.data() as StudentOrder;
+    if (useVercelBlob()) {
+      const urls = target.files.map((f) => f.blobUrl).filter((u): u is string => Boolean(u));
+      if (urls.length > 0) {
+        await del(urls, { token: resolveBlobToken() }).catch(() => {});
+      }
+    }
+    await ref.delete();
+    return true;
+  }
+
   const orders = await listOrders();
   const target = orders.find((o) => o.id === id);
   if (!target) return false;
