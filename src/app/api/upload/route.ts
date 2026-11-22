@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
-import { isFirebaseConfigured } from "@/lib/firebase-admin";
+import { getFirebaseDiagnostic } from "@/lib/firebase-admin";
 
 export const dynamic = "force-dynamic";
 
@@ -19,11 +19,17 @@ export async function GET() {
   const blobEnvKeys = Object.keys(process.env).filter((k) =>
     k.toUpperCase().includes("BLOB")
   );
+  const fb = getFirebaseDiagnostic();
   return NextResponse.json(
     {
       blobEnabled: Boolean(token || process.env.BLOB_STORE_ID),
-      firestoreEnabled: isFirebaseConfigured(),
+      firestoreEnabled: fb.configured,
+      firebaseDiag: fb,
+      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
+      hasAdminPassword: Boolean(process.env.ADMIN_PASSWORD),
       blobEnvKeys,
+      vercelEnv: process.env.VERCEL_ENV ?? null,
+      vercelProjectId: process.env.VERCEL_PROJECT_ID ?? null,
       runtime: process.env.VERCEL ? "vercel" : "local",
     },
     {
