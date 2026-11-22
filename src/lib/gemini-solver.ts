@@ -11,6 +11,51 @@ const SUPPORTED_INLINE_MIMES = new Set([
   "text/csv",
 ]);
 
+async function uploadToGeminiFilesApi(
+  apiKey: string,
+  buf: Buffer,
+  mimeType: string,
+  displayName: string
+): Promise<string | null> {
+  try {
+    // 1. Start resumable upload session
+    const initRes = await fetch(
+      `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${encodeURIComponent(
+        apiKey
+      )}`,
+      {
+        method: "POST",
+        headers: {
+          "X-Goog-Upload-Protocol": "resumable",
+          "X-Goog-Upload-Command": "start",
+          "X-Goog-Upload-Header-Content-Length": String(buf.length),
+          "X-Goog-Upload-Header-Content-Type": mimeType,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ file: { display_name: displayName } }),
+      }
+    );
+    const uploadUrl = initRes.headers.get("x-goog-upload-url");
+    if (!initRes.ok || !uploadUrl) return null;
+
+    // 2. Upload binary bytes
+    const upRes = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        "Content-Length": String(buf.length),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+      },
+      body: new Uint8Array(buf),
+    });
+    if (!upRes.ok) return null;
+    const info = (await upRes.json()) as { file?: { uri?: string } };
+    return info.file?.uri ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function buildSystemInstruction(order: StudentOrder, extraInstruction?: string): string {
   const strictRule = order.strictReferencesOnly
     ? "- اعتمد حصريا وبشكل صارم على المراجع والمطبوعات والدروس المرفقة مع الطلب فقط (القوانين، الرموز، سلالم التفسير، وطريقة الحل)، دون أي توسع أو استيراد مصطلحات أو طرق من خارج المراجع المرفوعة."
@@ -83,14 +128,39 @@ export async function generateSolutionWithGemini(
 
     if (meta.mimeType === "text/plain" || meta.mimeType === "text/csv") {
       parts.push({ text: `${label}\n${buf.toString("utf-8").slice(0, 60000)}` });
-    } else if (SUPPORTED_INLINE_MIMES.has(meta.mimeType) && buf.length <= 18 * 1024 * 1024) {
+    } else if (SUPPORTED_INLINE_MIMES.has(meta.mimeType)) {
       parts.push({ text: label });
-      parts.push({
-        inlineData: {
-          mimeType: meta.mimeType,
-          data: buf.toString("base64"),
-        },
-      });
+      if (buf.length > 2 * 1024 * 1024) {
+        // Use Gemini Files API for large PDFs/images (supports up to 50 MB per file)
+        const fileUri = await uploadToGeminiFilesApi(
+          apiKey,
+          buf,
+          meta.mimeType,
+          meta.originalName
+        );
+        if (fileUri) {
+          parts.push({
+            fileData: {
+              mimeType: meta.mimeType,
+              fileUri,
+            },
+          });
+        } else if (buf.length <= 15 * 1024 * 1024) {
+          parts.push({
+            inlineData: {
+              mimeType: meta.mimeType,
+              data: buf.toString("base64"),
+            },
+          });
+        }
+      } else {
+        parts.push({
+          inlineData: {
+            mimeType: meta.mimeType,
+            data: buf.toString("base64"),
+          },
+        });
+      }
     }
   }
 

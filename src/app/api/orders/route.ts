@@ -12,19 +12,90 @@ export async function GET() {
   return NextResponse.json({ orders });
 }
 
+interface JsonOrderPayload {
+  studentName?: string;
+  contact?: string;
+  university?: string;
+  specialty?: string;
+  moduleName?: string;
+  assignmentTitle?: string;
+  exerciseText?: string;
+  notes?: string;
+  includeCoverPage?: boolean;
+  strictReferencesOnly?: boolean;
+  uploadedFiles?: UploadedFileMeta[];
+}
+
 export async function POST(req: Request) {
   try {
-    const formData = await req.formData();
-    const studentName = String(formData.get("studentName") ?? "").trim();
-    const contact = String(formData.get("contact") ?? "").trim();
-    const university = String(formData.get("university") ?? "").trim();
-    const specialty = String(formData.get("specialty") ?? "").trim();
-    const moduleName = String(formData.get("moduleName") ?? "").trim();
-    const assignmentTitle = String(formData.get("assignmentTitle") ?? "").trim();
-    const exerciseText = String(formData.get("exerciseText") ?? "").trim();
-    const notes = String(formData.get("notes") ?? "").trim();
-    const includeCoverPage = String(formData.get("includeCoverPage") ?? "false") === "true";
-    const strictReferencesOnly = String(formData.get("strictReferencesOnly") ?? "true") !== "false";
+    const contentType = req.headers.get("content-type") ?? "";
+    let studentName = "";
+    let contact = "";
+    let university = "";
+    let specialty = "";
+    let moduleName = "";
+    let assignmentTitle = "";
+    let exerciseText = "";
+    let notes = "";
+    let includeCoverPage = false;
+    let strictReferencesOnly = true;
+    const savedFiles: UploadedFileMeta[] = [];
+
+    if (contentType.includes("application/json")) {
+      const body = (await req.json()) as JsonOrderPayload;
+      studentName = String(body.studentName ?? "").trim();
+      contact = String(body.contact ?? "").trim();
+      university = String(body.university ?? "").trim();
+      specialty = String(body.specialty ?? "").trim();
+      moduleName = String(body.moduleName ?? "").trim();
+      assignmentTitle = String(body.assignmentTitle ?? "").trim();
+      exerciseText = String(body.exerciseText ?? "").trim();
+      notes = String(body.notes ?? "").trim();
+      includeCoverPage = Boolean(body.includeCoverPage);
+      strictReferencesOnly = body.strictReferencesOnly !== false;
+      if (Array.isArray(body.uploadedFiles)) {
+        for (const f of body.uploadedFiles) {
+          if (f && f.blobUrl && f.originalName) {
+            savedFiles.push({
+              id: String(f.id || crypto.randomUUID()),
+              originalName: String(f.originalName),
+              storedName: String(f.storedName || f.originalName),
+              blobUrl: String(f.blobUrl),
+              mimeType: String(f.mimeType || "application/octet-stream"),
+              size: Number(f.size || 0),
+              category: f.category === "reference" ? "reference" : "exercise",
+              uploadedAt: f.uploadedAt || new Date().toISOString(),
+            });
+          }
+        }
+      }
+    } else {
+      const formData = await req.formData();
+      studentName = String(formData.get("studentName") ?? "").trim();
+      contact = String(formData.get("contact") ?? "").trim();
+      university = String(formData.get("university") ?? "").trim();
+      specialty = String(formData.get("specialty") ?? "").trim();
+      moduleName = String(formData.get("moduleName") ?? "").trim();
+      assignmentTitle = String(formData.get("assignmentTitle") ?? "").trim();
+      exerciseText = String(formData.get("exerciseText") ?? "").trim();
+      notes = String(formData.get("notes") ?? "").trim();
+      includeCoverPage = String(formData.get("includeCoverPage") ?? "false") === "true";
+      strictReferencesOnly = String(formData.get("strictReferencesOnly") ?? "true") !== "false";
+
+      const exerciseFiles = formData
+        .getAll("exerciseFiles")
+        .filter((f): f is File => f instanceof File && f.size > 0);
+      const referenceFiles = formData
+        .getAll("referenceFiles")
+        .filter((f): f is File => f instanceof File && f.size > 0);
+
+      for (const f of exerciseFiles) {
+        savedFiles.push(await saveUploadedFile(f, "exercise"));
+      }
+      for (const f of referenceFiles) {
+        savedFiles.push(await saveUploadedFile(f, "reference"));
+      }
+    }
 
     if (!studentName || !moduleName || !assignmentTitle) {
       return NextResponse.json(
@@ -33,22 +104,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const exerciseFiles = formData.getAll("exerciseFiles").filter((f): f is File => f instanceof File && f.size > 0);
-    const referenceFiles = formData.getAll("referenceFiles").filter((f): f is File => f instanceof File && f.size > 0);
-
-    if (exerciseFiles.length === 0 && !exerciseText) {
+    if (savedFiles.length === 0 && !exerciseText) {
       return NextResponse.json(
         { error: "يرجى رفع ملف التمرين أو كتابة نص الأسئلة في الخانة المخصصة." },
         { status: 400 }
       );
-    }
-
-    const savedFiles: UploadedFileMeta[] = [];
-    for (const f of exerciseFiles) {
-      savedFiles.push(await saveUploadedFile(f, "exercise"));
-    }
-    for (const f of referenceFiles) {
-      savedFiles.push(await saveUploadedFile(f, "reference"));
     }
 
     const order = await createOrder({

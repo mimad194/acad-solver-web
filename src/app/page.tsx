@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { upload } from "@vercel/blob/client";
 import {
   CheckCircle2,
   Copy,
@@ -13,6 +14,7 @@ import {
   Trash2,
   ArrowLeft,
 } from "lucide-react";
+import type { UploadedFileMeta } from "@/types/order";
 
 export default function StudentOrderPage() {
   const [studentName, setStudentName] = useState("");
@@ -29,6 +31,7 @@ export default function StudentOrderPage() {
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState("");
   const [error, setError] = useState("");
   const [createdOrder, setCreatedOrder] = useState<{
     id: string;
@@ -51,25 +54,103 @@ export default function StudentOrderPage() {
     e.preventDefault();
     setError("");
     setSubmitting(true);
+    setUploadStatus("جاري التحضير...");
 
     try {
-      const fd = new FormData();
-      fd.append("studentName", studentName);
-      fd.append("contact", contact);
-      fd.append("university", university);
-      fd.append("specialty", specialty);
-      fd.append("moduleName", moduleName);
-      fd.append("assignmentTitle", assignmentTitle);
-      fd.append("exerciseText", exerciseText);
-      fd.append("notes", notes);
-      fd.append("includeCoverPage", String(includeCoverPage));
-      fd.append("strictReferencesOnly", String(strictReferencesOnly));
-      exerciseFiles.forEach((f) => fd.append("exerciseFiles", f));
-      referenceFiles.forEach((f) => fd.append("referenceFiles", f));
+      const allFiles: Array<{ file: File; category: "exercise" | "reference" }> = [
+        ...exerciseFiles.map((file) => ({ file, category: "exercise" as const })),
+        ...referenceFiles.map((file) => ({ file, category: "reference" as const })),
+      ];
 
-      const res = await fetch("/api/orders", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) {
+      // Check whether direct Vercel Blob client upload is enabled (bypasses 4.5 MB Serverless Function limit)
+      let blobEnabled = false;
+      try {
+        const cfgRes = await fetch("/api/upload");
+        if (cfgRes.ok) {
+          const cfg = (await cfgRes.json()) as { blobEnabled?: boolean };
+          blobEnabled = Boolean(cfg.blobEnabled);
+        }
+      } catch {
+        blobEnabled = false;
+      }
+
+      let res: Response;
+
+      if (blobEnabled && allFiles.length > 0) {
+        const uploadedFiles: UploadedFileMeta[] = [];
+        for (let i = 0; i < allFiles.length; i++) {
+          const { file, category } = allFiles[i];
+          setUploadStatus(`جاري رفع الملف ${i + 1} من ${allFiles.length}: ${file.name}`);
+          const extMatch = file.name.match(/\.[a-zA-Z0-9]+$/);
+          const safeExt = extMatch ? extMatch[0].toLowerCase() : "";
+          const pathname = `acad-solver/uploads/${category}-${Date.now()}-${i}${safeExt}`;
+          const blob = await upload(pathname, file, {
+            access: "public",
+            handleUploadUrl: "/api/upload",
+            multipart: file.size > 4 * 1024 * 1024,
+          });
+          uploadedFiles.push({
+            id: `${Date.now()}-${i}`,
+            originalName: file.name,
+            storedName: blob.pathname.split("/").pop() || file.name,
+            blobUrl: blob.url,
+            mimeType: file.type || blob.contentType || "application/octet-stream",
+            size: file.size,
+            category,
+            uploadedAt: new Date().toISOString(),
+          });
+        }
+
+        setUploadStatus("جاري تسجيل الطلب...");
+        res = await fetch("/api/orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            studentName,
+            contact,
+            university,
+            specialty,
+            moduleName,
+            assignmentTitle,
+            exerciseText,
+            notes,
+            includeCoverPage,
+            strictReferencesOnly,
+            uploadedFiles,
+          }),
+        });
+      } else {
+        setUploadStatus("جاري إرسال الطلب...");
+        const fd = new FormData();
+        fd.append("studentName", studentName);
+        fd.append("contact", contact);
+        fd.append("university", university);
+        fd.append("specialty", specialty);
+        fd.append("moduleName", moduleName);
+        fd.append("assignmentTitle", assignmentTitle);
+        fd.append("exerciseText", exerciseText);
+        fd.append("notes", notes);
+        fd.append("includeCoverPage", String(includeCoverPage));
+        fd.append("strictReferencesOnly", String(strictReferencesOnly));
+        exerciseFiles.forEach((f) => fd.append("exerciseFiles", f));
+        referenceFiles.forEach((f) => fd.append("referenceFiles", f));
+        res = await fetch("/api/orders", { method: "POST", body: fd });
+      }
+
+      const rawText = await res.text();
+      let data: { id?: string; trackingCode?: string; error?: string } = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        if (res.status === 413 || rawText.includes("Request Entity Too Large")) {
+          throw new Error(
+            "حجم الملفات المرفوعة يتجاوز الحد المسموح به للرفع المباشر. تأكد من تفعيل Vercel Blob أو قلّل حجم الملفات."
+          );
+        }
+        throw new Error(`استجابة غير متوقعة من الخادم (${res.status}).`);
+      }
+
+      if (!res.ok || !data.id || !data.trackingCode) {
         throw new Error(data.error || "تعذر إرسال الطلب.");
       }
       setCreatedOrder({ id: data.id, trackingCode: data.trackingCode });
@@ -77,6 +158,7 @@ export default function StudentOrderPage() {
       setError(err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
     } finally {
       setSubmitting(false);
+      setUploadStatus("");
     }
   };
 
@@ -426,7 +508,7 @@ export default function StudentOrderPage() {
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60 shadow-sm transition-colors"
             >
               <Send className="w-4 h-4" />
-              {submitting ? "جاري إرسال الطلب..." : "إرسال الطلب والحصول على رمز التتبع"}
+              {submitting ? (uploadStatus || "جاري إرسال الطلب...") : "إرسال الطلب والحصول على رمز التتبع"}
             </button>
           </div>
         </form>
