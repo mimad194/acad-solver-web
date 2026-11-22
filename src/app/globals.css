@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import "katex/dist/katex.min.css";
+
+html {
+  direction: rtl;
+}
+
+body {
+  background-color: #f6f8fb;
+  color: #1a2433;
+  font-feature-settings: "kern" 1;
+}
+
+/* Keep KaTeX math strictly LTR inside RTL Arabic paragraphs */
+.katex,
+.katex-display {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+  margin: 0 !important;
+}
+
+/* Subtle paper shadow for A4 preview */
+.academic-paper {
+  background: #ffffff;
+  box-shadow: 0 2px 18px rgba(27, 54, 93, 0.08), 0 0 0 1px rgba(27, 54, 93, 0.06);
+}
