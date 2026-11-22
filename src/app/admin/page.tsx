@@ -132,9 +132,6 @@ export default function AdminDashboardPage() {
               placeholder="••••••••"
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
             />
-            <p className="text-[11px] text-slate-400 mt-1.5">
-              القيمة الافتراضية المحلية: <code className="font-mono">admin2026</code> (قابلة للتغيير في <code className="font-mono">.env.local</code>)
-            </p>
           </div>
 
           <button
