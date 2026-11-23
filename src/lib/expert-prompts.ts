@@ -6,6 +6,7 @@ import type {
 } from "@/types/order";
 import { getStyleProfile } from "./style-profiles";
 import { buildDnaPromptBlock } from "./uniqueness-engine";
+import { findCatalogSpecialty, getYearMeta } from "./ufc-catalog";
 
 export interface DisciplineProfileConfig {
   id: Exclude<AcademicDiscipline, "auto">;
@@ -154,7 +155,32 @@ export function detectAcademicDiscipline(
     return "case_study";
   }
 
+  const catalogSpec = findCatalogSpecialty(order.cycle, order.year, order.specialtyId);
+  if (catalogSpec) {
+    return catalogSpec.defaultDiscipline;
+  }
+
   return "theoretical_essay";
+}
+
+function buildAcademicLevelContext(order: StudentOrder): string {
+  const spec = findCatalogSpecialty(order.cycle, order.year, order.specialtyId);
+  const yearMeta = getYearMeta(order.cycle, order.year);
+  if (!spec && !yearMeta) return "";
+
+  const lines: string[] = ["سياق المسار الأكاديمي الرسمي للطالب (جامعة التكوين المتواصل UFC):"];
+  if (yearMeta) lines.push(`- المستوى: ${yearMeta.label}`);
+  if (spec) {
+    lines.push(`- الميدان: ${spec.domain}`);
+    lines.push(`- التخصص الدقيق: ${spec.label}`);
+    if (spec.language === "en") {
+      lines.push(
+        "- لغة التكوين: هذا التخصص يُدرّس باللغة الإنجليزية — التزم تماماً بلغة أسئلة التمرين والمطبوعات المرفقة (أجب بالإنجليزية الأكاديمية الرصينة إذا كانت الأسئلة والمطبوعات بالإنجليزية، مع الإبقاء على studyGuide واضحاً ومفيداً للطالب)."
+      );
+    }
+  }
+  if (yearMeta) lines.push(`- مستوى العمق الأكاديمي المطلوب: ${yearMeta.depthDirective}`);
+  return `\n${lines.join("\n")}\n`;
 }
 
 const ANTI_CLICHE_RULES = `- يُمنع منعا باتا استخدام الكليشيهات النمطية الآلية المكررة مثل: ("في الختام"، "تجدر الإشارة إلى أنه"، "مما لا شك فيه"، "يتضح جليا"، "بناءً على ما سبق يتبين"، "يُعدّ ... ركيزة أساسية"، "من الجدير بالذكر"، "في عالم الأعمال المعاصر"، "باختصار شديد"، "علاوة على ذلك") أو الرموز التعبيرية أو بدء عدة فقرات متتالية بنفس التركيب.
@@ -225,8 +251,10 @@ export function buildStage1SystemPrompt(params: {
 ${siblingSnippets.map((s, i) => `(${i + 1}) ${s}`).join("\n")}\n`
       : "";
 
-  return `أنت خبير أكاديمي وأستاذ باحث برتبة أستاذ محاضر متخصص في تأطير طلبة الماستر وإعداد حلول نموذجية فائقة الجودة تفوق بمراحل الإجابات السطحية لأدوات الذكاء الاصطناعي التقليدية.
+  const academicContextBlock = buildAcademicLevelContext(order);
 
+  return `أنت خبير أكاديمي وأستاذ باحث برتبة أستاذ محاضر متخصص في تأطير طلبة الجامعة وإعداد حلول نموذجية فائقة الجودة تفوق بمراحل الإجابات السطحية لأدوات الذكاء الاصطناعي التقليدية.
+${academicContextBlock}
 مهمتك: إنتاج حل جامعي متكامل، عميق، مدقّق حسابيا ومنهجيا، ومُهيكل بصيغة JSON ليُصدَّر مباشرة إلى ملف Word عربي RTL احترافي، بالإضافة إلى «دليل فهم سريع» يساعد الطالب على استيعاب الحل ومناقشته بثقة.
 
 1) معيار التفوق الأكاديمي والشمولية (ممنوع السطحية أو الاختصار):

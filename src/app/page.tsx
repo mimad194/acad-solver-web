@@ -12,13 +12,34 @@ import {
   FileSpreadsheet,
   FileText,
   FileUp,
+  Library,
   Send,
   ShieldCheck,
   Sparkles,
   Trash2,
   ArrowLeft,
 } from "lucide-react";
-import type { PackageId, PublicAppConfig, UploadedFileMeta } from "@/types/order";
+import type {
+  AcademicCycle,
+  AcademicYearCode,
+  PackageId,
+  PublicAppConfig,
+  UploadedFileMeta,
+} from "@/types/order";
+import {
+  UFC_CYCLES,
+  formatSpecialtyDisplay,
+  getSpecialtiesFor,
+  getYearsForCycle,
+  normalizeCourseKey,
+} from "@/lib/ufc-catalog";
+
+interface LibraryModuleSummary {
+  id: string;
+  moduleName: string;
+  refCount: number;
+  refNames: string[];
+}
 
 const FALLBACK_CONFIG: PublicAppConfig = {
   currency: "دج",
@@ -75,7 +96,10 @@ export default function StudentOrderPage() {
   const [studentName, setStudentName] = useState("");
   const [contact, setContact] = useState("");
   const [university, setUniversity] = useState("جامعة التكوين المتواصل (UFC)");
-  const [specialty, setSpecialty] = useState("");
+  const [cycle, setCycle] = useState<AcademicCycle>("master");
+  const [year, setYear] = useState<AcademicYearCode>("M2");
+  const [specialtyId, setSpecialtyId] = useState<string>("m_org_management");
+  const [customSpecialty, setCustomSpecialty] = useState("");
   const [moduleName, setModuleName] = useState("");
   const [assignmentTitle, setAssignmentTitle] = useState("");
   const [exerciseText, setExerciseText] = useState("");
@@ -84,6 +108,7 @@ export default function StudentOrderPage() {
   const [strictReferencesOnly, setStrictReferencesOnly] = useState(true);
   const [exerciseFiles, setExerciseFiles] = useState<File[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
+  const [libraryModules, setLibraryModules] = useState<LibraryModuleSummary[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
@@ -105,6 +130,62 @@ export default function StudentOrderPage() {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!specialtyId || specialtyId === "other") {
+      setLibraryModules([]);
+      return;
+    }
+    const qs = new URLSearchParams({ cycle, year, specialtyId });
+    fetch(`/api/library?${qs.toString()}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { modules?: LibraryModuleSummary[] } | null) => {
+        setLibraryModules(d?.modules ?? []);
+      })
+      .catch(() => setLibraryModules([]));
+  }, [cycle, year, specialtyId]);
+
+  const availableYears = getYearsForCycle(cycle);
+  const availableSpecialties = getSpecialtiesFor(cycle, year);
+  const groupedSpecialties = availableSpecialties.reduce<
+    Record<string, typeof availableSpecialties>
+  >((acc, item) => {
+    if (!acc[item.domain]) acc[item.domain] = [];
+    acc[item.domain].push(item);
+    return acc;
+  }, {});
+
+  const handleCycleChange = (nextCycle: AcademicCycle) => {
+    setCycle(nextCycle);
+    const nextYears = getYearsForCycle(nextCycle);
+    const nextYear = nextYears[0].code;
+    setYear(nextYear);
+    const nextSpecs = getSpecialtiesFor(nextCycle, nextYear);
+    setSpecialtyId(nextSpecs[0]?.id ?? "other");
+  };
+
+  const handleYearChange = (nextYear: AcademicYearCode) => {
+    setYear(nextYear);
+    const nextSpecs = getSpecialtiesFor(cycle, nextYear);
+    const stillValid = nextSpecs.some((s) => s.id === specialtyId);
+    if (!stillValid) {
+      setSpecialtyId(nextSpecs[0]?.id ?? "other");
+    }
+  };
+
+  const matchedLibraryModule =
+    specialtyId !== "other" && moduleName.trim()
+      ? libraryModules.find(
+          (m) =>
+            normalizeCourseKey(cycle, year, specialtyId, m.moduleName) ===
+            normalizeCourseKey(cycle, year, specialtyId, moduleName)
+        ) ?? null
+      : null;
+
+  const computedSpecialtyText =
+    specialtyId === "other"
+      ? customSpecialty.trim()
+      : formatSpecialtyDisplay(cycle, year, specialtyId);
 
   const selectedPkg =
     appConfig.packages.find((p) => p.id === selectedPackageId) ??
@@ -187,7 +268,10 @@ export default function StudentOrderPage() {
             studentName,
             contact,
             university,
-            specialty,
+            cycle,
+            year,
+            specialtyId: specialtyId === "other" ? "" : specialtyId,
+            specialty: computedSpecialtyText,
             moduleName,
             assignmentTitle,
             exerciseText,
@@ -204,7 +288,10 @@ export default function StudentOrderPage() {
         fd.append("studentName", studentName);
         fd.append("contact", contact);
         fd.append("university", university);
-        fd.append("specialty", specialty);
+        fd.append("cycle", cycle);
+        fd.append("year", year);
+        fd.append("specialtyId", specialtyId === "other" ? "" : specialtyId);
+        fd.append("specialty", computedSpecialtyText);
         fd.append("moduleName", moduleName);
         fd.append("assignmentTitle", assignmentTitle);
         fd.append("exerciseText", exerciseText);
@@ -535,18 +622,90 @@ export default function StudentOrderPage() {
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
-            <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                التخصص والمستوى
-              </label>
-              <input
-                type="text"
-                value={specialty}
-                onChange={(e) => setSpecialty(e.target.value)}
-                placeholder="مثال: ماستر 2 إدارة المنظمات — السداسي 3"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
-              />
+
+            {/* 3-Step Cascading Academic Selector: Cycle -> Year -> Specialty */}
+            <div className="md:col-span-2 p-4 rounded-2xl bg-navy-50/50 border border-navy-100 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-extrabold text-navy-800">
+                  تحديد المسار الأكاديمي الدقيق (الطور ← السنة ← التخصص)
+                </p>
+                <span className="text-[11px] text-slate-500">
+                  يخصّص عمق الإجابة ولغتها ويفحص توفر مراجع المقياس آليا
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    1) الطور الجامعي <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={cycle}
+                    onChange={(e) => handleCycleChange(e.target.value as AcademicCycle)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  >
+                    {UFC_CYCLES.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    2) السنة / المستوى <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={year}
+                    onChange={(e) => handleYearChange(e.target.value as AcademicYearCode)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  >
+                    {availableYears.map((y) => (
+                      <option key={y.code} value={y.code}>
+                        {y.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    3) التخصص / الجذع المشترك ({availableSpecialties.length}) <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    value={specialtyId}
+                    onChange={(e) => setSpecialtyId(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  >
+                    {Object.entries(groupedSpecialties).map(([domainName, specs]) => (
+                      <optgroup key={domainName} label={domainName}>
+                        {specs.map((sp) => (
+                          <option key={`${sp.year}-${sp.id}`} value={sp.id}>
+                            {sp.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <option value="other">تخصص آخر / جامعة أخرى...</option>
+                  </select>
+                </div>
+              </div>
+
+              {specialtyId === "other" && (
+                <div>
+                  <input
+                    required
+                    type="text"
+                    value={customSpecialty}
+                    onChange={(e) => setCustomSpecialty(e.target.value)}
+                    placeholder="اكتب اسم تخصصك ومستواك بالضبط..."
+                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  />
+                </div>
+              )}
             </div>
+
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1.5">
                 اسم المقياس <span className="text-red-500">*</span>
@@ -559,10 +718,34 @@ export default function StudentOrderPage() {
                 placeholder="مثال: تحليل المعطيات"
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
+              {libraryModules.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                    <Library className="w-3.5 h-3.5" />
+                    مقاييس متوفرة مراجعها الرسمية تلقائيا في المكتبة (اختر بنقرة واحدة):
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {libraryModules.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setModuleName(m.moduleName)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                          matchedLibraryModule?.id === m.id
+                            ? "bg-emerald-600 text-white border-emerald-600"
+                            : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                        }`}
+                      >
+                        {m.moduleName} ({m.refCount} مرجع ✓)
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                عنوان النشاط أو التمرين <span className="text-red-500">*</span>
+                عنوان النشاط أو رقمه <span className="text-red-500">*</span>
               </label>
               <input
                 required
@@ -621,17 +804,37 @@ export default function StudentOrderPage() {
             </div>
 
             {/* Reference Files */}
-            <div className="border-2 border-dashed border-slate-300 rounded-xl p-4 bg-slate-50/60">
+            <div
+              className={`border-2 border-dashed rounded-xl p-4 ${
+                matchedLibraryModule
+                  ? "border-emerald-300 bg-emerald-50/50"
+                  : "border-slate-300 bg-slate-50/60"
+              }`}
+            >
               <div className="flex items-center gap-2 text-slate-800 font-bold text-sm mb-1">
                 <FileSpreadsheet className="w-4 h-4 text-navy-600" />
-                مراجع ودروس المقياس (PDF / صور / نصوص)
+                {matchedLibraryModule
+                  ? "مراجع إضافية أو ملاحظاتك الشخصية / صور كراسك (اختياري)"
+                  : "مراجع ودروس المقياس أو ملاحظاتك الشخصية (PDF / صور)"}
               </div>
-              <p className="text-xs text-slate-500 mb-3">
-                ارفع المحاضرات والمطبوعات المعتمدة للالتزام بقوانينها ورموزها.
-              </p>
+              {matchedLibraryModule ? (
+                <div className="mb-3 p-2.5 rounded-lg bg-emerald-100/80 border border-emerald-200 text-xs text-emerald-900 space-y-1">
+                  <p className="font-bold flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    المراجع الرسمية لمقياس «{matchedLibraryModule.moduleName}» متوفرة تلقائيا ({matchedLibraryModule.refCount} مطبوعة معتمدة) — لا تحتاج لإعادة رفعها!
+                  </p>
+                  <p className="text-[11px] text-emerald-800">
+                    يمكنك اختياريا إرفاق صور من كراسك أو ملاحظات أستاذك في المدرج لإدماجها في الحل.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500 mb-3">
+                  ارفع المحاضرات والمطبوعات المعتمدة أو صور ملاحظاتك الشخصية من المدرج للالتزام بقوانينها ورموزها.
+                </p>
+              )}
               <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-white border border-slate-300 hover:border-navy-600 text-xs font-bold text-slate-700 cursor-pointer shadow-sm">
                 <FileUp className="w-4 h-4" />
-                إضافة مراجع المقياس
+                {matchedLibraryModule ? "إضافة ملاحظاتك الشخصية أو صور الكراس" : "إضافة مراجع المقياس / صور الكراس"}
                 <input
                   type="file"
                   multiple

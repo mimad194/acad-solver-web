@@ -11,6 +11,7 @@ import type {
   StyleProfileId,
 } from "@/types/order";
 import { listOrders, readUploadedFileBuffer } from "./store";
+import { findCourseLibraryEntry } from "./course-library";
 import { extractProseText, pickAutoStyleAndTheme } from "./style-profiles";
 import {
   buildStage1SystemPrompt,
@@ -171,6 +172,9 @@ async function buildOrderAttachmentParts(
 
   const contextLines = [
     `الجامعة: ${order.university || "غير محددة"}`,
+    order.cycle ? `الطور: ${order.cycle === "master" ? "ماستر" : "ليسانس"}` : "",
+    order.year ? `السنة/المستوى: ${order.year}` : "",
+    order.domain ? `الميدان: ${order.domain}` : "",
     `التخصص والمستوى: ${order.specialty || "غير محدد"}`,
     `المقياس: ${order.moduleName}`,
     `عنوان النشاط: ${order.assignmentTitle}`,
@@ -182,15 +186,46 @@ async function buildOrderAttachmentParts(
 
   parts.push({ text: contextLines });
 
+  // Merge student's uploaded files with any archived Official Course Library references (zero duplication!)
+  const libraryEntry = await findCourseLibraryEntry({
+    cycle: order.cycle,
+    year: order.year,
+    specialtyId: order.specialtyId,
+    moduleName: order.moduleName,
+  });
+
+  const combinedFiles: Array<{
+    meta: (typeof order.files)[number];
+    source: "student" | "library";
+  }> = [];
+  const seenKeys = new Set<string>();
+
+  for (const f of order.files) {
+    const k = f.blobUrl || `${f.category}:${f.originalName.toLowerCase()}`;
+    if (!seenKeys.has(k)) {
+      seenKeys.add(k);
+      combinedFiles.push({ meta: f, source: "student" });
+    }
+  }
+  for (const lf of libraryEntry?.referenceFiles ?? []) {
+    const k = lf.blobUrl || `reference:${lf.originalName.toLowerCase()}`;
+    if (!seenKeys.has(k)) {
+      seenKeys.add(k);
+      combinedFiles.push({ meta: lf, source: "library" });
+    }
+  }
+
   // Fetch & upload attachments in parallel to minimize serverless latency
   const filePartGroups = await Promise.all(
-    order.files.map(async (meta): Promise<Array<Record<string, unknown>>> => {
+    combinedFiles.map(async ({ meta, source }): Promise<Array<Record<string, unknown>>> => {
       const buf = await readUploadedFileBuffer(meta.storedName, meta.blobUrl);
       if (!buf) return [];
       const label =
         meta.category === "exercise"
           ? `ملف أسئلة التمرين المرفق (${meta.originalName}):`
-          : `ملف مرجع/درس المقياس المرفق (${meta.originalName}):`;
+          : source === "library"
+          ? `مرجع/مطبوعة رسمية من مكتبة المقياس الموحّدة (${meta.originalName}):`
+          : `ملف مرجع/ملاحظات شخصية مرفق من الطالب (${meta.originalName}):`;
 
       if (meta.mimeType === "text/plain" || meta.mimeType === "text/csv") {
         return [{ text: `${label}\n${buf.toString("utf-8").slice(0, 60000)}` }];
@@ -537,12 +572,16 @@ async function listPeersForModule(order: StudentOrder): Promise<StudentOrder[]> 
   try {
     const all = await listOrders();
     const normMod = order.moduleName.trim().toLowerCase();
-    return all.filter(
-      (o) =>
-        o.id !== order.id &&
-        o.solution !== null &&
-        o.moduleName.trim().toLowerCase() === normMod
-    );
+    return all.filter((o) => {
+      if (o.id === order.id || o.solution === null) return false;
+      if (o.moduleName.trim().toLowerCase() !== normMod) return false;
+      if (order.cycle && o.cycle && order.cycle !== o.cycle) return false;
+      if (order.year && o.year && order.year !== o.year) return false;
+      if (order.specialtyId && o.specialtyId && order.specialtyId !== o.specialtyId) {
+        return false;
+      }
+      return true;
+    });
   } catch {
     return [];
   }

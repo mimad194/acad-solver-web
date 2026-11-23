@@ -196,12 +196,33 @@ export interface SolutionDocument {
   updatedAt: string;
 }
 
+export type AcademicCycle = "licence" | "master";
+
+export type AcademicYearCode = "L1" | "L2" | "L3" | "M1" | "M2";
+
+export interface CourseLibraryEntry {
+  id: string;
+  key: string; // normalized cycle|year|specialtyId|moduleName
+  cycle: AcademicCycle;
+  year: AcademicYearCode;
+  specialtyId: string;
+  specialtyLabel: string;
+  domain: string;
+  moduleName: string;
+  referenceFiles: UploadedFileMeta[];
+  updatedAt: string;
+}
+
 export interface StudentOrder {
   id: string;
   trackingCode: string;
   studentName: string;
   contact: string;
   university: string;
+  cycle?: AcademicCycle;
+  year?: AcademicYearCode;
+  domain?: string;
+  specialtyId?: string;
   specialty: string;
   moduleName: string;
   assignmentTitle: string;
@@ -209,6 +230,7 @@ export interface StudentOrder {
   notes: string;
   includeCoverPage: boolean;
   strictReferencesOnly: boolean;
+  usedLibraryRefCount?: number;
   packageId?: PackageId;
   priceDzd?: number;
   paymentStatus?: PaymentStatus;

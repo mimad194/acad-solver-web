@@ -14,6 +14,7 @@ import {
   FilePlus,
   FileText,
   GraduationCap,
+  Library,
   MessageCircle,
   Palette,
   RefreshCw,
@@ -95,6 +96,11 @@ export default function AdminOrderWorkspacePage({
   const [docxTheme, setDocxTheme] = useState<DocxThemeId>("classic_navy");
   const [similarity, setSimilarity] = useState<SimilarityReport | null>(null);
   const [checkingSim, setCheckingSim] = useState(false);
+  const [archivedRefs, setArchivedRefs] = useState<{
+    archivedCount: number;
+    archivedNames: string[];
+  } | null>(null);
+  const [archivingRefs, setArchivingRefs] = useState(false);
   const [activeTab, setActiveTab] = useState<"preview" | "edit">("preview");
 
   const [loading, setLoading] = useState(true);
@@ -146,6 +152,14 @@ export default function AdminOrderWorkspacePage({
       } else {
         setSimilarity(null);
       }
+      fetch(`/api/orders/${o.id}/archive-refs`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && typeof d.archivedCount === "number") {
+            setArchivedRefs(d);
+          }
+        })
+        .catch(() => {});
     } catch (err) {
       setMessage({
         type: "err",
@@ -347,6 +361,36 @@ export default function AdminOrderWorkspacePage({
     }
   };
 
+  const handleArchiveRefs = async () => {
+    if (!order) return;
+    setArchivingRefs(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/orders/${order.id}/archive-refs`, {
+        method: "POST",
+      });
+      const data = await safeReadJson(res);
+      if (!res.ok) throw new Error(String(data.error || "تعذر أرشفة المراجع."));
+      setArchivedRefs({
+        archivedCount: Number(data.archivedCount ?? 0),
+        archivedNames: Array.isArray(data.archivedNames)
+          ? data.archivedNames.map(String)
+          : [],
+      });
+      setMessage({
+        type: "ok",
+        text: `تم حفظ المراجع في مكتبة المقياس الرسمية (${Number(data.archivedCount ?? 0)} مطبوعة). ستُحقن تلقائيا لكل طالب قادم في نفس المسار والمقياس دون إعادة رفع!`,
+      });
+    } catch (err) {
+      setMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : "تعذر حفظ المراجع في المكتبة.",
+      });
+    } finally {
+      setArchivingRefs(false);
+    }
+  };
+
   const handleRegenerateDistinct = () => {
     const curStyleIdx = STYLE_PROFILES.findIndex((s) => s.id === styleProfile);
     const nextStyle = STYLE_PROFILES[(curStyleIdx + 1) % STYLE_PROFILES.length].id;
@@ -492,6 +536,13 @@ export default function AdminOrderWorkspacePage({
               <p><strong className="text-slate-800">الطالب:</strong> {order.studentName}</p>
               {order.contact && <p><strong className="text-slate-800">التواصل:</strong> {order.contact}</p>}
               {order.university && <p><strong className="text-slate-800">الجامعة:</strong> {order.university}</p>}
+              {(order.cycle || order.year) && (
+                <p>
+                  <strong className="text-slate-800">الطور والمستوى:</strong>{" "}
+                  {order.cycle === "master" ? "ماستر" : "ليسانس"} {order.year ? `(${order.year})` : ""}
+                </p>
+              )}
+              {order.domain && <p><strong className="text-slate-800">الميدان:</strong> {order.domain}</p>}
               {order.specialty && <p><strong className="text-slate-800">التخصص:</strong> {order.specialty}</p>}
               <p><strong className="text-slate-800">المقياس:</strong> {order.moduleName}</p>
               <p>
@@ -555,6 +606,42 @@ export default function AdminOrderWorkspacePage({
                 ))}
               </ul>
             )}
+
+            {/* Shared Course Library Archiving Control */}
+            <div className="pt-2 border-t border-slate-100 space-y-2">
+              {archivedRefs && archivedRefs.archivedCount > 0 ? (
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[11px] text-emerald-900">
+                  <strong className="flex items-center gap-1 mb-0.5">
+                    <Library className="w-3.5 h-3.5 text-emerald-700" />
+                    مكتبة المقياس الرسمية: {archivedRefs.archivedCount} مرجع محفوظ تلقائيا
+                  </strong>
+                  <p className="text-emerald-800">
+                    تُحقن تلقائيا في محرك الحل ولكل طلب قادم لنفس المسار والمقياس.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-500">
+                  لا توجد مراجع مؤرشفة بعد لهذا المسار والمقياس في المكتبة الموحّدة.
+                </p>
+              )}
+
+              {order.files.some((f) => f.category === "reference") &&
+                order.cycle &&
+                order.year &&
+                order.specialtyId && (
+                  <button
+                    type="button"
+                    onClick={handleArchiveRefs}
+                    disabled={archivingRefs}
+                    className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-navy-50 hover:bg-navy-100 border border-navy-200 text-navy-800 font-bold text-xs disabled:opacity-60"
+                  >
+                    <Library className="w-3.5 h-3.5" />
+                    {archivingRefs
+                      ? "جاري الحفظ في المكتبة..."
+                      : "حفظ مراجع هذا الطلب في مكتبة المقياس الرسمية"}
+                  </button>
+                )}
+            </div>
           </div>
 
           {/* AI Generation Box */}

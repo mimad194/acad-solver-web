@@ -3,7 +3,14 @@ import { createOrder, listOrders, saveUploadedFile } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
 import { getPublicAppConfig, resolvePackagePrice } from "@/lib/pricing-config";
 import { sendTelegramAlert } from "@/lib/notify";
-import { PackageId, UploadedFileMeta } from "@/types/order";
+import { findCourseLibraryEntry } from "@/lib/course-library";
+import { findCatalogSpecialty, formatSpecialtyDisplay } from "@/lib/ufc-catalog";
+import {
+  AcademicCycle,
+  AcademicYearCode,
+  PackageId,
+  UploadedFileMeta,
+} from "@/types/order";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +27,9 @@ interface JsonOrderPayload {
   studentName?: string;
   contact?: string;
   university?: string;
+  cycle?: AcademicCycle;
+  year?: AcademicYearCode;
+  specialtyId?: string;
   specialty?: string;
   moduleName?: string;
   assignmentTitle?: string;
@@ -37,6 +47,9 @@ export async function POST(req: Request) {
     let studentName = "";
     let contact = "";
     let university = "";
+    let cycle: AcademicCycle | undefined;
+    let year: AcademicYearCode | undefined;
+    let specialtyId = "";
     let specialty = "";
     let moduleName = "";
     let assignmentTitle = "";
@@ -52,6 +65,17 @@ export async function POST(req: Request) {
       studentName = String(body.studentName ?? "").trim();
       contact = String(body.contact ?? "").trim();
       university = String(body.university ?? "").trim();
+      if (body.cycle === "licence" || body.cycle === "master") cycle = body.cycle;
+      if (
+        body.year === "L1" ||
+        body.year === "L2" ||
+        body.year === "L3" ||
+        body.year === "M1" ||
+        body.year === "M2"
+      ) {
+        year = body.year;
+      }
+      specialtyId = String(body.specialtyId ?? "").trim();
       specialty = String(body.specialty ?? "").trim();
       moduleName = String(body.moduleName ?? "").trim();
       assignmentTitle = String(body.assignmentTitle ?? "").trim();
@@ -81,6 +105,19 @@ export async function POST(req: Request) {
       studentName = String(formData.get("studentName") ?? "").trim();
       contact = String(formData.get("contact") ?? "").trim();
       university = String(formData.get("university") ?? "").trim();
+      const rawCycle = String(formData.get("cycle") ?? "").trim();
+      if (rawCycle === "licence" || rawCycle === "master") cycle = rawCycle;
+      const rawYear = String(formData.get("year") ?? "").trim();
+      if (
+        rawYear === "L1" ||
+        rawYear === "L2" ||
+        rawYear === "L3" ||
+        rawYear === "M1" ||
+        rawYear === "M2"
+      ) {
+        year = rawYear;
+      }
+      specialtyId = String(formData.get("specialtyId") ?? "").trim();
       specialty = String(formData.get("specialty") ?? "").trim();
       moduleName = String(formData.get("moduleName") ?? "").trim();
       assignmentTitle = String(formData.get("assignmentTitle") ?? "").trim();
@@ -115,7 +152,22 @@ export async function POST(req: Request) {
       );
     }
 
-    if (savedFiles.length === 0 && !exerciseText) {
+    const catalogSpec = findCatalogSpecialty(cycle, year, specialtyId);
+    const resolvedSpecialtyText = formatSpecialtyDisplay(
+      cycle,
+      year,
+      specialtyId,
+      specialty
+    );
+    const libraryEntry = await findCourseLibraryEntry({
+      cycle,
+      year,
+      specialtyId: specialtyId || undefined,
+      moduleName,
+    });
+    const libraryRefCount = libraryEntry?.referenceFiles.length ?? 0;
+
+    if (savedFiles.length === 0 && !exerciseText && libraryRefCount === 0) {
       return NextResponse.json(
         { error: "يرجى رفع ملف التمرين أو كتابة نص الأسئلة في الخانة المخصصة." },
         { status: 400 }
@@ -129,13 +181,18 @@ export async function POST(req: Request) {
       studentName,
       contact,
       university,
-      specialty,
+      cycle,
+      year,
+      domain: catalogSpec?.domain,
+      specialtyId: specialtyId || undefined,
+      specialty: resolvedSpecialtyText,
       moduleName,
       assignmentTitle,
       exerciseText,
       notes,
       includeCoverPage,
       strictReferencesOnly,
+      usedLibraryRefCount: libraryRefCount,
       packageId: pkg.packageId,
       priceDzd: pkg.priceDzd,
       paymentStatus: "unpaid",
@@ -149,10 +206,12 @@ export async function POST(req: Request) {
       `📥 طلب جديد في المنصة\n` +
         `الرمز: ${order.trackingCode}\n` +
         `الطالب: ${order.studentName}${order.contact ? ` (${order.contact})` : ""}\n` +
+        `المسار: ${resolvedSpecialtyText || "غير محدد"}\n` +
         `المقياس: ${order.moduleName} — ${order.assignmentTitle}\n` +
         `الباقة: ${pkg.packageName} (${pkg.priceDzd} ${cfg.currency})\n` +
-        `المرفقات: ${savedFiles.length} ملف\n` +
-        `الإدارة: ${origin}/admin/orders/${order.id}`
+        `المرفقات: ${savedFiles.length} ملف` +
+        (libraryRefCount > 0 ? ` (+ ${libraryRefCount} مرجع تلقائي من المكتبة)` : "") +
+        `\nالإدارة: ${origin}/admin/orders/${order.id}`
     );
 
     return NextResponse.json(
