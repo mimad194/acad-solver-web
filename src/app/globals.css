@@ -6,12 +6,53 @@
 
 html {
   direction: rtl;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overflow-x: hidden;
+  overflow-x: clip;
+  scroll-behavior: smooth;
 }
 
 body {
   background-color: #f6f8fb;
   color: #1a2433;
   font-feature-settings: "kern" 1;
+  overflow-x: hidden;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Remove 300ms tap delay and harsh flash on older Android & iOS browsers */
+a,
+button,
+input,
+select,
+textarea,
+label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Prevent iOS Safari & WKWebView forced auto-zoom when focusing inputs < 16px */
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Consistent native select rendering across iOS Safari & Android Chrome */
+select {
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+/* Smooth touch scrolling for wide tables & equations on older iOS Safari */
+.overflow-x-auto,
+.katex-display {
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Keep KaTeX math strictly LTR inside RTL Arabic paragraphs */

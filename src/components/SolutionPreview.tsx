@@ -88,16 +88,16 @@ function PreviewBlock({ block }: { block: DocumentBlock }) {
 
     case "paragraph":
       return (
-        <p className="text-[15.5px] leading-8 text-slate-800 text-justify mb-3">
+        <p className="text-[15px] sm:text-[15.5px] leading-8 text-slate-800 text-right sm:text-justify mb-3 break-words">
           <RichInlineText text={block.text} />
         </p>
       );
 
     case "bullet":
       return (
-        <div className="flex items-start gap-2.5 pr-4 mb-2 text-[15.5px] leading-8 text-slate-800">
+        <div className="flex items-start gap-2.5 pr-2 sm:pr-4 mb-2 text-[15px] sm:text-[15.5px] leading-8 text-slate-800">
           <span className="text-navy-600 font-bold mt-0.5">•</span>
-          <p className="flex-1 text-justify">
+          <p className="flex-1 text-right sm:text-justify break-words min-w-0">
             <RichInlineText text={block.text} />
           </p>
         </div>
@@ -187,26 +187,26 @@ export default function SolutionPreview({
   solution: SolutionDocument;
 }) {
   return (
-    <div dir="rtl" className="academic-paper rounded-xl p-6 sm:p-10 max-w-4xl mx-auto">
+    <div dir="rtl" className="academic-paper rounded-xl p-4 sm:p-10 max-w-4xl mx-auto overflow-hidden">
       {solution.includeCoverPage && (
-        <div className="mb-10 pb-8 border-b-2 border-dashed border-slate-300 text-center space-y-3">
-          <p className="font-bold text-navy-800">الجمهورية الجزائرية الديمقراطية الشعبية</p>
-          <p className="font-bold text-navy-700 text-sm">وزارة التعليم العالي والبحث العلمي</p>
+        <div className="mb-8 sm:mb-10 pb-6 sm:pb-8 border-b-2 border-dashed border-slate-300 text-center space-y-2.5 sm:space-y-3">
+          <p className="font-bold text-navy-800 text-sm sm:text-base">الجمهورية الجزائرية الديمقراطية الشعبية</p>
+          <p className="font-bold text-navy-700 text-xs sm:text-sm">وزارة التعليم العالي والبحث العلمي</p>
           {solution.coverMeta?.university && (
-            <p className="font-bold text-navy-600 text-lg">{solution.coverMeta.university}</p>
+            <p className="font-bold text-navy-600 text-base sm:text-lg">{solution.coverMeta.university}</p>
           )}
           {solution.coverMeta?.specialty && (
-            <p className="text-slate-700 font-medium">
+            <p className="text-slate-700 font-medium text-sm sm:text-base">
               التخصص والمستوى: {solution.coverMeta.specialty}
             </p>
           )}
           {solution.coverMeta?.moduleName && (
-            <p className="text-navy-800 font-bold">
+            <p className="text-navy-800 font-bold text-sm sm:text-base">
               المقياس: {solution.coverMeta.moduleName}
             </p>
           )}
-          <div className="my-5 inline-block px-8 py-4 bg-navy-50 border-2 border-navy-700 rounded-lg">
-            <p className="text-2xl font-extrabold text-navy-800">{solution.title}</p>
+          <div className="my-4 sm:my-5 inline-block max-w-full px-4 sm:px-8 py-3 sm:py-4 bg-navy-50 border-2 border-navy-700 rounded-lg">
+            <p className="text-lg sm:text-2xl font-extrabold text-navy-800 break-words">{solution.title}</p>
           </div>
           {solution.coverMeta?.studentName && (
             <p className="text-right font-bold text-slate-700 pt-2">

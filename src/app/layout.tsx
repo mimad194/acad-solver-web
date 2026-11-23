@@ -1,11 +1,29 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1B365D",
+};
 
 export const metadata: Metadata = {
   title: "منصة المُنجِز الأكاديمي | المرافقة المنهجية والإخراج الأكاديمي",
   description:
     "منصة جامعية للمرافقة المنهجية والإخراج الأكاديمي الاحترافي لطلبة الليسانس والماستر بالاعتماد على مراجع ومطبوعات المقياس.",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "المُنجِز الأكاديمي",
+  },
+  formatDetection: {
+    telephone: false,
+    date: false,
+    address: false,
+    email: false,
+  },
 };
 
 export default function RootLayout({
@@ -23,11 +41,11 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-screen font-sans antialiased flex flex-col">
+      <body className="min-h-screen min-h-[100dvh] font-sans antialiased flex flex-col">
         <Navbar />
-        <main className="flex-1">{children}</main>
-        <footer className="border-t border-slate-200 bg-white py-5 mt-12">
-          <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-slate-500">
+        <main className="flex-1 w-full">{children}</main>
+        <footer className="border-t border-slate-200 bg-white pt-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] mt-10 sm:mt-12">
+          <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-center sm:text-right text-xs sm:text-sm text-slate-500">
             <p>منصة المُنجِز الأكاديمي — المرافقة المنهجية والإخراج الأكاديمي لطلبة الجامعة</p>
             <p className="text-xs text-slate-400">جودة أكاديمية رفيعة • سرية تامة • إخراج احترافي متكامل</p>
           </div>

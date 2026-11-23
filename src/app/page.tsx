@@ -36,6 +36,7 @@ import {
   getYearsForCycle,
   normalizeCourseKey,
 } from "@/lib/ufc-catalog";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface LibraryModuleSummary {
   id: string;
@@ -318,7 +319,7 @@ export default function StudentOrderPage() {
       const totalBytes = allFiles.reduce((acc, item) => acc + item.file.size, 0);
       if (!blobEnabled && totalBytes > 4 * 1024 * 1024) {
         throw new Error(
-          `إجمالي حجم الملفات (${(totalBytes / (1024 * 1024)).toFixed(1)} MB) يتجاوز 4 MB بينما متغير BLOB_READ_WRITE_TOKEN غير متصل بهذا النشر على Vercel. يرجى التأكد من ربط مخزن Vercel Blob (acad-solver-blob) من تبويب Storage في المشروع وإعادة النشر (Redeploy).`
+          `إجمالي حجم الملفات (${(totalBytes / (1024 * 1024)).toFixed(1)} MB) كبير للرفع المباشر حالياً. يرجى تقليل حجم الملفات أو ضغطها وإعادة المحاولة.`
         );
       }
 
@@ -416,7 +417,7 @@ export default function StudentOrderPage() {
       } catch {
         if (res.status === 413 || rawText.includes("Request Entity Too Large")) {
           throw new Error(
-            "حجم الملفات المرفوعة يتجاوز الحد المسموح به للرفع المباشر. تأكد من تفعيل Vercel Blob أو قلّل حجم الملفات."
+            "حجم الملفات المرفوعة يتجاوز الحد المسموح به. يرجى ضغط الملفات أو تقليل حجمها وإعادة المحاولة."
           );
         }
         throw new Error(`استجابة غير متوقعة من الخادم (${res.status}).`);
@@ -444,15 +445,15 @@ export default function StudentOrderPage() {
 
   const copyCode = async () => {
     if (!createdOrder) return;
-    await navigator.clipboard.writeText(createdOrder.trackingCode);
+    await copyToClipboard(createdOrder.trackingCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
+    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-5 sm:py-8 space-y-6 sm:space-y-8">
       {/* Hero Banner */}
-      <section className="rounded-2xl bg-gradient-to-l from-navy-800 via-navy-700 to-navy-600 text-white p-6 sm:p-8 shadow-md">
+      <section className="rounded-2xl bg-gradient-to-l from-navy-800 via-navy-700 to-navy-600 text-white p-5 sm:p-8 shadow-md">
         <div className="max-w-3xl space-y-3">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-medium">
             <Sparkles className="w-3.5 h-3.5" />
@@ -641,14 +642,14 @@ export default function StudentOrderPage() {
             )}
           </div>
 
-          <div className="bg-navy-50 border border-navy-200 rounded-xl p-4 inline-flex items-center gap-4">
-            <span dir="ltr" className="text-2xl font-mono font-extrabold text-navy-800 tracking-wider">
+          <div className="bg-navy-50 border border-navy-200 rounded-xl p-3.5 sm:p-4 inline-flex flex-wrap items-center justify-center gap-3 sm:gap-4 max-w-full">
+            <span dir="ltr" className="text-xl sm:text-2xl font-mono font-extrabold text-navy-800 tracking-wider break-all">
               {createdOrder.trackingCode}
             </span>
             <button
               type="button"
               onClick={copyCode}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-navy-700 text-white text-xs font-medium hover:bg-navy-600"
+              className="inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-2 rounded-lg bg-navy-700 text-white text-xs font-medium hover:bg-navy-600"
             >
               <Copy className="w-3.5 h-3.5" />
               {copied ? "تم النسخ" : "نسخ الرمز"}
@@ -681,11 +682,11 @@ export default function StudentOrderPage() {
                     const url = `${window.location.origin}/?ref=${encodeURIComponent(
                       createdOrder.referralCode!
                     )}`;
-                    await navigator.clipboard.writeText(url);
+                    await copyToClipboard(url);
                     setCopiedRef(true);
                     setTimeout(() => setCopiedRef(false), 2000);
                   }}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-navy-700 hover:bg-navy-600 text-white text-xs font-bold"
+                  className="inline-flex items-center gap-1 min-h-[40px] px-3 py-2 rounded-lg bg-navy-700 hover:bg-navy-600 text-white text-xs font-bold"
                 >
                   <Copy className="w-3.5 h-3.5" />
                   {copiedRef ? "تم نسخ الرابط ✓" : "نسخ رابط الإحالة"}
@@ -703,7 +704,7 @@ export default function StudentOrderPage() {
                       "noopener,noreferrer"
                     );
                   }}
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                  className="inline-flex items-center gap-1 min-h-[40px] px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
                 >
                   <MessageCircle className="w-3.5 h-3.5" />
                   مشاركة على WhatsApp
@@ -739,7 +740,7 @@ export default function StudentOrderPage() {
       ) : (
         <form
           onSubmit={handleSubmit}
-          className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 shadow-sm space-y-6"
+          className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-8 shadow-sm space-y-5 sm:space-y-6"
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100">
             <div>
@@ -773,10 +774,11 @@ export default function StudentOrderPage() {
               <input
                 required
                 type="text"
+                autoComplete="name"
                 value={studentName}
                 onChange={(e) => setStudentName(e.target.value)}
                 placeholder="مثال: محمد أمين بن علي"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
             <div>
@@ -788,7 +790,7 @@ export default function StudentOrderPage() {
                 value={contact}
                 onChange={(e) => setContact(e.target.value)}
                 placeholder="example@email.com أو 05XX..."
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
             <div>
@@ -800,12 +802,12 @@ export default function StudentOrderPage() {
                 value={university}
                 onChange={(e) => setUniversity(e.target.value)}
                 placeholder="جامعة التكوين المتواصل (UFC)"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
 
             {/* 3-Step Cascading Academic Selector: Cycle -> Year -> Specialty */}
-            <div className="md:col-span-2 p-4 rounded-2xl bg-navy-50/50 border border-navy-100 space-y-3">
+            <div className="md:col-span-2 p-3.5 sm:p-4 rounded-2xl bg-navy-50/50 border border-navy-100 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-extrabold text-navy-800">
                   تحديد المسار الأكاديمي الدقيق (الطور ← السنة ← التخصص)
@@ -818,12 +820,12 @@ export default function StudentOrderPage() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    1) الطور الجامعي <span className="text-red-500">*</span>
+                    الطور الجامعي <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={cycle}
                     onChange={(e) => handleCycleChange(e.target.value as AcademicCycle)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
                   >
                     {UFC_CYCLES.map((c) => (
                       <option key={c.id} value={c.id}>
@@ -835,12 +837,12 @@ export default function StudentOrderPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    2) السنة / المستوى <span className="text-red-500">*</span>
+                    السنة / المستوى <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={year}
                     onChange={(e) => handleYearChange(e.target.value as AcademicYearCode)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
                   >
                     {availableYears.map((y) => (
                       <option key={y.code} value={y.code}>
@@ -852,12 +854,12 @@ export default function StudentOrderPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    3) التخصص / الجذع المشترك ({availableSpecialties.length}) <span className="text-red-500">*</span>
+                    التخصص / الجذع المشترك <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={specialtyId}
                     onChange={(e) => setSpecialtyId(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                    className="w-full min-h-[44px] px-3 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
                   >
                     {Object.entries(groupedSpecialties).map(([domainName, specs]) => (
                       <optgroup key={domainName} label={domainName}>
@@ -881,7 +883,7 @@ export default function StudentOrderPage() {
                     value={customSpecialty}
                     onChange={(e) => setCustomSpecialty(e.target.value)}
                     placeholder="اكتب اسم تخصصك ومستواك بالضبط..."
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
                   />
                 </div>
               )}
@@ -897,7 +899,7 @@ export default function StudentOrderPage() {
                 value={moduleName}
                 onChange={(e) => setModuleName(e.target.value)}
                 placeholder="مثال: تحليل المعطيات"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
               {libraryModules.length > 0 && (
                 <div className="mt-2 space-y-1">
@@ -911,13 +913,13 @@ export default function StudentOrderPage() {
                         key={m.id}
                         type="button"
                         onClick={() => setModuleName(m.moduleName)}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
+                        className={`min-h-[34px] px-3 py-1 rounded-full text-[11px] font-bold border transition-colors ${
                           matchedLibraryModule?.id === m.id
                             ? "bg-emerald-600 text-white border-emerald-600"
                             : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
                         }`}
                       >
-                        {m.moduleName} ({m.refCount} مرجع ✓)
+                        {m.moduleName} ✓
                       </button>
                     ))}
                   </div>
@@ -934,7 +936,7 @@ export default function StudentOrderPage() {
                 value={assignmentTitle}
                 onChange={(e) => setAssignmentTitle(e.target.value)}
                 placeholder="مثال: النشاط المنزلي الأول"
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
           </div>
@@ -1002,7 +1004,7 @@ export default function StudentOrderPage() {
                 <div className="mb-3 p-2.5 rounded-lg bg-emerald-100/80 border border-emerald-200 text-xs text-emerald-900 space-y-1">
                   <p className="font-bold flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                    المراجع الرسمية لمقياس «{matchedLibraryModule.moduleName}» متوفرة تلقائيا ({matchedLibraryModule.refCount} مطبوعة معتمدة) — لا تحتاج لإعادة رفعها!
+                    المراجع الرسمية لمقياس «{matchedLibraryModule.moduleName}» متوفرة تلقائيا — لا تحتاج لإعادة رفعها!
                   </p>
                   <p className="text-[11px] text-emerald-800">
                     يمكنك اختياريا إرفاق صور من كراسك أو ملاحظات أستاذك في المدرج لإدماجها في الحل.
@@ -1109,19 +1111,22 @@ export default function StudentOrderPage() {
               <input
                 type="text"
                 dir="ltr"
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
                 value={promoInput}
                 onChange={(e) => {
                   setPromoInput(e.target.value.toUpperCase());
                   if (!e.target.value.trim()) setAppliedDiscount(null);
                 }}
                 placeholder="مثال: PASS-XXXXX أو FREE-XXXXX أو REF-XXXXX"
-                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs uppercase focus:outline-none focus:ring-2 focus:ring-navy-600"
+                className="flex-1 min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs uppercase focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
               <button
                 type="button"
                 disabled={validatingPromo || !promoInput.trim()}
                 onClick={() => validateCode(promoInput, selectedPackageId)}
-                className="px-4 py-2 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-50 text-white font-bold text-xs shrink-0"
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-50 text-white font-bold text-xs shrink-0"
               >
                 {validatingPromo ? "جاري التحقق..." : "تطبيق الكود"}
               </button>
@@ -1162,7 +1167,7 @@ export default function StudentOrderPage() {
             <button
               type="submit"
               disabled={submitting}
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60 shadow-sm transition-colors"
+              className="w-full sm:w-auto min-h-[48px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60 shadow-sm transition-colors"
             >
               <Send className="w-4 h-4" />
               {submitting ? (uploadStatus || "جاري إرسال الطلب...") : "إرسال الطلب والحصول على رمز التتبع"}

@@ -29,6 +29,7 @@ import {
   SolutionDocument,
 } from "@/types/order";
 import SolutionPreview from "@/components/SolutionPreview";
+import { copyToClipboard } from "@/lib/clipboard";
 
 interface TrackedOrder {
   id: string;
@@ -241,14 +242,14 @@ function TrackContent() {
       : null;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-5xl mx-auto px-3 sm:px-4 py-5 sm:py-8 space-y-5 sm:space-y-6">
       {/* Search Bar Card */}
-      <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+      <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-4">
         <div>
-          <h1 className="text-2xl font-extrabold text-navy-800">
+          <h1 className="text-xl sm:text-2xl font-extrabold text-navy-800">
             متابعة حالة الطلب وتحميل الحل
           </h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-xs sm:text-sm text-slate-500 mt-1 leading-relaxed">
             أدخل رمز التتبع الذي حصلت عليه عند إرسال الطلب لمعرفة حالته، معاينة الجزء الأول من الحل، ورفع وصل الدفع لتحميل ملف Word (.docx).
           </p>
         </div>
@@ -263,22 +264,25 @@ function TrackContent() {
           <input
             type="text"
             dir="ltr"
+            autoCapitalize="characters"
+            autoCorrect="off"
+            spellCheck={false}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="ORD-2026-XXXX"
-            className="flex-1 px-4 py-3 rounded-xl border border-slate-300 font-mono text-base text-center sm:text-left focus:outline-none focus:ring-2 focus:ring-navy-600"
+            className="flex-1 min-h-[46px] px-4 py-3 rounded-xl border border-slate-300 font-mono text-base text-center sm:text-left focus:outline-none focus:ring-2 focus:ring-navy-600"
           />
           <button
             type="submit"
             disabled={loading}
-            className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60"
+            className="w-full sm:w-auto min-h-[46px] inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60"
           >
             <Search className="w-4 h-4" />
             {loading ? "جاري البحث..." : "بحث عن الطلب"}
           </button>
         </form>
 
-        <div className="text-xs text-slate-500 flex items-center gap-2">
+        <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2">
           <span>لتجربة المعاينة وتحميل ملف Word فورا:</span>
           <button
             type="button"
@@ -303,7 +307,7 @@ function TrackContent() {
       {order && (
         <>
           {/* Order Details & Stepper */}
-          <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+          <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-6 shadow-sm space-y-5 sm:space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -401,17 +405,17 @@ function TrackContent() {
 
           {/* Semester Activity Credits Pass Card (PASS-XXXXX) */}
           {creditPass && (
-            <section className="bg-gradient-to-l from-navy-800 to-navy-700 text-white rounded-2xl p-6 shadow-md space-y-4">
+            <section className="bg-gradient-to-l from-navy-800 to-navy-700 text-white rounded-2xl p-4 sm:p-6 shadow-md space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/15">
                 <div>
                   <p className="text-xs font-bold text-amber-300">
                     🎟️ بطاقة رصيد أنشطة السداسي (صالح قبل الامتحانات الحضورية)
                   </p>
-                  <h3 className="text-lg font-extrabold mt-0.5">
+                  <h3 className="text-base sm:text-lg font-extrabold mt-0.5">
                     المتبقي لك: {creditPass.remainingCredits} من أصل {creditPass.totalCredits} نشاط
                   </h3>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span
                     dir="ltr"
                     className="font-mono text-sm font-black px-3 py-1.5 rounded-xl bg-white text-navy-900"
@@ -421,11 +425,11 @@ function TrackContent() {
                   <button
                     type="button"
                     onClick={async () => {
-                      await navigator.clipboard.writeText(creditPass.passCode);
+                      await copyToClipboard(creditPass.passCode);
                       setCopiedPass(true);
                       setTimeout(() => setCopiedPass(false), 2000);
                     }}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold"
+                    className="inline-flex items-center gap-1 min-h-[40px] px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     {copiedPass ? "نُسخ ✓" : "نسخ الرمز"}
@@ -530,11 +534,11 @@ function TrackContent() {
                     const url = `${window.location.origin}/?ref=${encodeURIComponent(
                       referralStats.referralCode
                     )}`;
-                    await navigator.clipboard.writeText(url);
+                    await copyToClipboard(url);
                     setCopiedRef(true);
                     setTimeout(() => setCopiedRef(false), 2000);
                   }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-navy-700 hover:bg-navy-600 text-white text-xs font-bold"
+                  className="inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-2 rounded-xl bg-navy-700 hover:bg-navy-600 text-white text-xs font-bold"
                 >
                   <Copy className="w-3.5 h-3.5" />
                   {copiedRef ? "تم نسخ رابط الإحالة ✓" : "نسخ رابط الإحالة"}
@@ -552,7 +556,7 @@ function TrackContent() {
                       "noopener,noreferrer"
                     );
                   }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                  className="inline-flex items-center gap-1.5 min-h-[40px] px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
                 >
                   <MessageCircle className="w-3.5 h-3.5" />
                   مشاركة الرابط في مجموعات WhatsApp
@@ -622,21 +626,21 @@ function TrackContent() {
                   {config?.payment.baridimobRip || config?.payment.ccpAccount ? (
                     <div className="space-y-2">
                       {config.payment.baridimobRip && (
-                        <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
-                          <div>
+                        <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
                             <span className="text-[10px] text-slate-500 block">رقم RIP (BaridiMob)</span>
-                            <span dir="ltr" className="font-mono font-extrabold text-sm text-navy-900">
+                            <span dir="ltr" className="font-mono font-extrabold text-sm text-navy-900 break-all">
                               {config.payment.baridimobRip}
                             </span>
                           </div>
                           <button
                             type="button"
                             onClick={async () => {
-                              await navigator.clipboard.writeText(config.payment.baridimobRip);
+                              await copyToClipboard(config.payment.baridimobRip);
                               setCopiedRip(true);
                               setTimeout(() => setCopiedRip(false), 2000);
                             }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-navy-700 text-white text-[11px] font-bold hover:bg-navy-600 shrink-0"
+                            className="inline-flex items-center gap-1 min-h-[38px] px-3 py-1.5 rounded-lg bg-navy-700 text-white text-[11px] font-bold hover:bg-navy-600 shrink-0"
                           >
                             <Copy className="w-3 h-3" />
                             {copiedRip ? "نُسخ" : "نسخ"}
@@ -835,7 +839,7 @@ function TrackContent() {
                     <div className="space-y-1 text-center md:text-right">
                       <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300">
                         <Lock className="w-4 h-4" />
-                        تم عرض {order.solution.blocks.length} عناصر فقط من أصل {order.totalBlocksCount} عنصر
+                        معاينة مجانية للجزء الأول فقط — بقية العمل جاهزة للفتح
                       </div>
                       <h4 className="text-base sm:text-lg font-extrabold">
                         باقي الحل وملف Word الكامل {order.hasStudyGuide ? "+ دليل الفهم والمناقشة" : ""} جاهزان للتنزيل
