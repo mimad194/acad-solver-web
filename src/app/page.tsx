@@ -60,7 +60,7 @@ const FALLBACK_CONFIG: PublicAppConfig = {
       subtitle: "مثالية لتجربة الجودة الكاملة في نشاط واحد بلا مخاطرة",
       features: [
         "نفس الجودة القصوى: التزام بمطبوعات الأستاذ وتدقيق حسابي ومنهجي",
-        "ملف Word عربي RTL أصلي بمعادلات وجداول جاهزة للرفع في Moodle",
+        "ملف Word احترافي منسّق بالجداول والمعادلات وجاهز للاستخدام المباشر",
         "بصمة أسلوبية وتنسيقية فريدة (تشابه < 20% مع باقي الدفعة)",
         "بطاقة «دليل الفهم السريع والمناقشة» حصرية للطالب",
       ],
@@ -456,28 +456,28 @@ export default function StudentOrderPage() {
         <div className="max-w-3xl space-y-3">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-xs font-medium">
             <Sparkles className="w-3.5 h-3.5" />
-            تنسيق أكاديمي عربي RTL متكامل بمعادلات Word الأصلية
+            مرافقة منهجية وإخراج أكاديمي احترافي لطلبة الجامعة
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold leading-snug">
-            أرسل نشاطك الجامعي ومراجع المقياس، واستلم الحل منسّقا وجاهزا للرفع
+            ارتقِ بجودة أعمالك الجامعية وفق مراجع أستاذك وبإخراج أكاديمي متقن
           </h1>
           <p className="text-sm sm:text-base text-slate-200 leading-relaxed">
-            يرفع الطالب ملف الأسئلة ومطبوعات المقياس، فيتولى المشرف إعداد الحل ومراجعته بدقة بالاعتماد الحصري على مراجع المقياس ثم تسليمه كملف Word (.docx) من اليمين إلى اليسار مع جداول ومعادلات رياضية وإحصائية أصلية.
+            أرسل معطيات عملك ومطبوعات المقياس المعتمدة، لتحصل على معالجة منهجية دقيقة ومراجعة متكاملة في ملف Word منسّق بعناية فائقة وجاهز للاستخدام المباشر، مرفقاً بدليل فهم سريع لمساعدتك في المراجعة والمناقشة.
           </p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/15 text-xs sm:text-sm">
           <div className="bg-white/10 rounded-xl p-3">
             <span className="font-bold block mb-0.5">1. اختر باقتك وأرسل المرفقات</span>
-            <span className="text-slate-200">ارفع التمرين ومطبوعات المقياس واحصل فورا على رمز تتبع.</span>
+            <span className="text-slate-200">حدّد مسارك ومقياسك واحصل فورا على رمز متابعة خاص بك.</span>
           </div>
           <div className="bg-white/10 rounded-xl p-3">
-            <span className="font-bold block mb-0.5">2. إعداد وتدقيق ثنائي المرحلة</span>
-            <span className="text-slate-200">حل ملتزم بمراجع أستاذك + معاينة مجانية لأول جزء قبل الدفع.</span>
+            <span className="font-bold block mb-0.5">2. معالجة منهجية وتدقيق دقيق</span>
+            <span className="text-slate-200">التزام بمراجع أستاذك + معاينة مجانية لأول جزء قبل الدفع.</span>
           </div>
           <div className="bg-white/10 rounded-xl p-3">
-            <span className="font-bold block mb-0.5">3. تحميل Word RTL + دليل الفهم</span>
-            <span className="text-slate-200">ملف .docx جاهز لـ Moodle + ملخص وأسئلة مناقشة متوقعة.</span>
+            <span className="font-bold block mb-0.5">3. استلام ملف Word + دليل الفهم</span>
+            <span className="text-slate-200">ملف .docx منسّق بإتقان + ملخص وأسئلة مناقشة متوقعة.</span>
           </div>
         </div>
       </section>
@@ -489,10 +489,10 @@ export default function StudentOrderPage() {
             <Award className="w-5 h-5" />
           </div>
           <h2 className="font-extrabold text-sm text-navy-800">
-            يتفوق على مخرجات ChatGPT السطحية
+            يتفوق على المخرجات السطحية والعامة
           </h2>
           <p className="text-xs text-slate-600 leading-relaxed">
-            بدل إجابات عامة منسوخة، يلتزم الحل برموز وقوانين مطبوعاتك ويمر بتدقيق حسابي ومنهجي وإخراج معادلات Word أصلية (Cambria Math) بدون انقلاب أرقام أو جداول مكسورة.
+            بدل الإجابات العامة والمبعثرة، يلتزم العمل برموز وقوانين مطبوعاتك الجامعية مع تدقيق حسابي ومنهجي وإخراج نظيف ومنسّق للجداول والمعادلات دون أي أخطاء تنسيقية.
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
@@ -696,7 +696,7 @@ export default function StudentOrderPage() {
                     const url = `${window.location.origin}/?ref=${encodeURIComponent(
                       createdOrder.referralCode!
                     )}`;
-                    const msg = `السلام عليكم، أنصحكم بهذه المنصة لإعداد وتنسيق أنشطة UFC في ملف Word RTL أصلي وفق مطبوعات الأستاذ. استعملوا رابطي للحصول على تخفيض ${appConfig.referral.friendDiscountPercent}%:\n${url}`;
+                    const msg = `السلام عليكم، أنصحكم بهذه المنصة للمرافقة المنهجية والإخراج الأكاديمي الاحترافي وفق مطبوعات المقياس. استعملوا رابطي للحصول على تخفيض ${appConfig.referral.friendDiscountPercent}%:\n${url}`;
                     window.open(
                       `https://wa.me/?text=${encodeURIComponent(msg)}`,
                       "_blank",

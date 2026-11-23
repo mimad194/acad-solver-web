@@ -1208,7 +1208,7 @@ export default function AdminOrderWorkspacePage({
                 }`}
               >
                 <Eye className="w-4 h-4" />
-                معاينة الوثيقة (A4 RTL)
+                معاينة الوثيقة (A4)
               </button>
               <button
                 type="button"

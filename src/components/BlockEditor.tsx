@@ -24,7 +24,7 @@ const BLOCK_LABELS: Record<DocumentBlock["type"], string> = {
   paragraph: "فقرة نصية (تدعم $LaTeX$ و **عريض**)",
   bullet: "نقطة تعدادية",
   equation: "معادلة رياضية مستقلة (LaTeX)",
-  table: "جدول منسق RTL",
+  table: "جدول منسق",
 };
 
 function makeEmptyBlock(type: DocumentBlock["type"]): DocumentBlock {
@@ -332,7 +332,7 @@ export default function BlockEditor({
             { type: "paragraph" as const, label: "فقرة نصية", icon: Type },
             { type: "bullet" as const, label: "نقطة تعدادية", icon: List },
             { type: "equation" as const, label: "معادلة LaTeX", icon: Sigma },
-            { type: "table" as const, label: "جدول RTL", icon: Table2 },
+            { type: "table" as const, label: "جدول", icon: Table2 },
           ].map((btn) => {
             const Icon = btn.icon;
             return (

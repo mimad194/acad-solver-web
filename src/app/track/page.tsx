@@ -81,7 +81,7 @@ interface CreditPassSummary {
 const STEPS: Array<{ key: OrderStatus; label: string; desc: string }> = [
   { key: "pending", label: "تم استلام الطلب", desc: "الطلب مسجل وبانتظار مراجعة المشرف" },
   { key: "in_review", label: "قيد الإعداد والمراجعة", desc: "يجري حل النشاط وتدقيق المعادلات والجداول" },
-  { key: "completed", label: "مكتمل وجاهز للتحميل", desc: "تم اعتماد الحل وتجهيز ملف Word RTL" },
+  { key: "completed", label: "مكتمل وجاهز للتحميل", desc: "تم اعتماد العمل وتجهيز ملف Word للتحميل" },
 ];
 
 const PAYMENT_BADGE: Record<PaymentStatus, { label: string; cls: string }> = {
@@ -545,7 +545,7 @@ function TrackContent() {
                     const url = `${window.location.origin}/?ref=${encodeURIComponent(
                       referralStats.referralCode
                     )}`;
-                    const msg = `السلام عليكم، أنصحكم بهذه المنصة لإعداد وتنسيق أنشطة UFC في ملف Word RTL أصلي وفق مطبوعات الأستاذ. استعملوا رابطي للحصول على خصم ${referralStats.friendDiscountPercent}%:\n${url}`;
+                    const msg = `السلام عليكم، أنصحكم بهذه المنصة للمرافقة المنهجية والإخراج الأكاديمي الاحترافي وفق مطبوعات المقياس. استعملوا رابطي للحصول على خصم ${referralStats.friendDiscountPercent}%:\n${url}`;
                     window.open(
                       `https://wa.me/?text=${encodeURIComponent(msg)}`,
                       "_blank",
@@ -838,7 +838,7 @@ function TrackContent() {
                         تم عرض {order.solution.blocks.length} عناصر فقط من أصل {order.totalBlocksCount} عنصر
                       </div>
                       <h4 className="text-base sm:text-lg font-extrabold">
-                        باقي الحل وملف Word RTL الأصلي {order.hasStudyGuide ? "+ دليل الفهم والمناقشة" : ""} جاهزان للتنزيل
+                        باقي الحل وملف Word الكامل {order.hasStudyGuide ? "+ دليل الفهم والمناقشة" : ""} جاهزان للتنزيل
                       </h4>
                       <p className="text-xs text-slate-200">
                         أرسل وصل التحويل عبر BaridiMob في البطاقة أعلاه، وفور تأكيده من المشرف يُفتح الحل الكامل وزر تحميل ملف Word تلقائيا.

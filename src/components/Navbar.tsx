@@ -25,7 +25,7 @@ export default function Navbar() {
               المُنجِز الأكاديمي
             </span>
             <span className="block text-[11px] text-slate-500 leading-tight">
-              إعداد وتنسيق الأنشطة الجامعية RTL
+              المرافقة المنهجية والإخراج الأكاديمي
             </span>
           </div>
         </Link>

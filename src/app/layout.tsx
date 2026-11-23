@@ -3,9 +3,9 @@ import "./globals.css";
 import Navbar from "@/components/Navbar";
 
 export const metadata: Metadata = {
-  title: "منصة المُنجِز الأكاديمي | إعداد وتنسيق الأنشطة الجامعية بصيغة Word RTL",
+  title: "منصة المُنجِز الأكاديمي | المرافقة المنهجية والإخراج الأكاديمي",
   description:
-    "منصة جامعية لاستقبال طلبات الأنشطة والتمارين وإعداد حلولها المنهجية بالاعتماد على مراجع المقياس وتصديرها في ملفات Word عربية RTL بمعادلات أصلية.",
+    "منصة جامعية للمرافقة المنهجية والإخراج الأكاديمي الاحترافي لطلبة الليسانس والماستر بالاعتماد على مراجع ومطبوعات المقياس.",
 };
 
 export default function RootLayout({
@@ -28,8 +28,8 @@ export default function RootLayout({
         <main className="flex-1">{children}</main>
         <footer className="border-t border-slate-200 bg-white py-5 mt-12">
           <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-slate-500">
-            <p>منصة المُنجِز الأكاديمي — إعداد وتنسيق الأنشطة الجامعية بصيغة Word (RTL + OMML)</p>
-            <p className="text-xs text-slate-400">توافق كامل مع Microsoft Word وخطوط المعادلات الأصلية</p>
+            <p>منصة المُنجِز الأكاديمي — المرافقة المنهجية والإخراج الأكاديمي لطلبة الجامعة</p>
+            <p className="text-xs text-slate-400">جودة أكاديمية رفيعة • سرية تامة • إخراج احترافي متكامل</p>
           </div>
         </footer>
       </body>
