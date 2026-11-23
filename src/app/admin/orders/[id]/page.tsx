@@ -11,16 +11,20 @@ import {
   FileDown,
   FilePlus,
   FileText,
+  GraduationCap,
   Palette,
   RefreshCw,
   Save,
   ShieldCheck,
   Sparkles,
+  Wand2,
   AlertCircle,
 } from "lucide-react";
 import {
+  AcademicDiscipline,
   DocxThemeId,
   OrderStatus,
+  RefineMode,
   SolutionDocument,
   StudentOrder,
   StyleProfileId,
@@ -30,6 +34,7 @@ import {
   STYLE_PROFILES,
   pickAutoStyleAndTheme,
 } from "@/lib/style-profiles";
+import { DISCIPLINE_LIST, DISCIPLINE_PROFILES } from "@/lib/expert-prompts";
 import SolutionPreview from "@/components/SolutionPreview";
 import BlockEditor from "@/components/BlockEditor";
 
@@ -60,6 +65,7 @@ export default function AdminOrderWorkspacePage({
   const [adminNote, setAdminNote] = useState("");
   const [extraInstruction, setExtraInstruction] = useState("");
   const [selectedModel, setSelectedModel] = useState("gemini-4-hydrogen");
+  const [discipline, setDiscipline] = useState<AcademicDiscipline>("auto");
   const [styleProfile, setStyleProfile] = useState<StyleProfileId>("analytical_narrative");
   const [docxTheme, setDocxTheme] = useState<DocxThemeId>("classic_navy");
   const [similarity, setSimilarity] = useState<SimilarityReport | null>(null);
@@ -69,6 +75,7 @@ export default function AdminOrderWorkspacePage({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [refiningMode, setRefiningMode] = useState<RefineMode | null>(null);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const loadSimilarity = useCallback(async (orderId: string) => {
@@ -104,6 +111,9 @@ export default function AdminOrderWorkspacePage({
       setAdminNote(o.adminNote);
       setStyleProfile(o.solution?.styleProfile ?? autoPick.styleProfile);
       setDocxTheme(o.solution?.docxTheme ?? autoPick.docxTheme);
+      if (o.solution?.qualityMeta?.discipline) {
+        setDiscipline(o.solution.qualityMeta.discipline);
+      }
       if (o.solution) {
         void loadSimilarity(o.id);
       } else {
@@ -184,6 +194,7 @@ export default function AdminOrderWorkspacePage({
           model: selectedModel,
           styleProfile: targetStyle,
           docxTheme: targetTheme,
+          discipline,
         }),
       });
       const data = await res.json();
@@ -197,11 +208,14 @@ export default function AdminOrderWorkspacePage({
       if (data.order.solution?.docxTheme) {
         setDocxTheme(data.order.solution.docxTheme);
       }
+      if (data.order.solution?.qualityMeta?.discipline) {
+        setDiscipline(data.order.solution.qualityMeta.discipline);
+      }
       setActiveTab("preview");
       void loadSimilarity(order.id);
       setMessage({
         type: "ok",
-        text: `تم توليد مسودة الحل بنجاح عبر النموذج (${data.usedModel || selectedModel}) بالأسلوب المختار. راجعها وعدّل ما يلزم ثم اعتمد التسليم.`,
+        text: `تم توليد مسودة المرحلة الأولى عبر (${data.usedModel || selectedModel}). يمكنك الآن تشغيل «التدقيق والتعميق الأكاديمي (المرحلة 2)» لرفع الجودة لأقصى حد.`,
       });
     } catch (err) {
       setMessage({
@@ -210,6 +224,48 @@ export default function AdminOrderWorkspacePage({
       });
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleRefine = async (mode: RefineMode) => {
+    if (!order || !solution) return;
+    setRefiningMode(mode);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/orders/${order.id}/refine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          extraInstruction,
+          model: selectedModel,
+          styleProfile,
+          discipline,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر تنفيذ مرحلة التحسين.");
+      setOrder(data.order);
+      setSolution(data.order.solution);
+      setActiveTab("preview");
+      void loadSimilarity(order.id);
+      const label =
+        mode === "deepen_and_audit"
+          ? "تم إتمام التدقيق الحسابي والمنهجي والتعميق الأكاديمي (المرحلة 2)"
+          : mode === "humanize_academic"
+          ? "تمت أنسنة الصياغة الأكاديمية بنجاح مع الحفاظ الكامل على الأرقام والمعادلات"
+          : "تم تحديث دليل الفهم والمناقشة للطالب بنجاح";
+      setMessage({
+        type: "ok",
+        text: `${label} عبر النموذج (${data.usedModel || selectedModel}).`,
+      });
+    } catch (err) {
+      setMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : "تعذر تنفيذ التحسين.",
+      });
+    } finally {
+      setRefiningMode(null);
     }
   };
 
@@ -461,6 +517,27 @@ export default function AdminOrderWorkspacePage({
             </div>
 
             <div>
+              <label className="flex items-center gap-1 text-xs font-bold text-slate-600 mb-1">
+                <GraduationCap className="w-3.5 h-3.5 text-navy-600" />
+                بروتوكول التخصص الأكاديمي (البرومبت المتخصص)
+              </label>
+              <select
+                value={discipline}
+                onChange={(e) => setDiscipline(e.target.value as AcademicDiscipline)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-navy-600"
+              >
+                {DISCIPLINE_LIST.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {DISCIPLINE_LIST.find((d) => d.id === discipline)?.shortDesc}
+              </p>
+            </div>
+
+            <div>
               <label className="block text-xs font-bold text-slate-600 mb-1">
                 أسلوب الصياغة وبنية التحليل (تنويع الدفعة)
               </label>
@@ -511,13 +588,93 @@ export default function AdminOrderWorkspacePage({
             <button
               type="button"
               onClick={() => handleGenerateAi()}
-              disabled={generating}
+              disabled={generating || refiningMode !== null}
               className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
             >
               <Sparkles className="w-4 h-4" />
-              {generating ? "جاري تحليل المراجع وإعداد الحل..." : "توليد الحل الآن عبر Gemini"}
+              {generating ? "جاري تحليل المراجع وإعداد الحل (المرحلة 1)..." : "توليد الحل الآن (المرحلة 1)"}
             </button>
           </div>
+
+          {/* Stage-2 Expert Quality Lab */}
+          {solution && (
+            <div className="bg-gradient-to-b from-emerald-50/70 to-white border border-emerald-200 rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between gap-2 border-b border-emerald-100 pb-2">
+                <h2 className="font-extrabold text-emerald-900 text-sm flex items-center gap-1.5">
+                  <Wand2 className="w-4 h-4 text-emerald-700" />
+                  مختبر الجودة الفائقة (المرحلة 2)
+                </h2>
+                <div className="flex items-center gap-1">
+                  {solution.qualityMeta?.auditPassApplied && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                      مدقّق ✓
+                    </span>
+                  )}
+                  {solution.qualityMeta?.humanizedPassApplied && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                      مؤنسَن ✓
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {solution.qualityMeta?.discipline && (
+                <p className="text-[11px] text-slate-600">
+                  <strong className="text-slate-800">البروتوكول المطبّق:</strong>{" "}
+                  {DISCIPLINE_PROFILES[solution.qualityMeta.discipline]?.label}
+                </p>
+              )}
+
+              <p className="text-xs text-slate-600 leading-relaxed">
+                يراجع الحل كأستاذ مشرف مقابل ملفات المقياس، يكشف أي نقص أو خطأ حسابي، ويعمّق التحليل ليتفوق بوضوح على المخرجات السطحية لأدوات الذكاء الاصطناعي العامة.
+              </p>
+
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleRefine("deepen_and_audit")}
+                  disabled={generating || refiningMode !== null}
+                  className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+                >
+                  <GraduationCap className="w-4 h-4" />
+                  {refiningMode === "deepen_and_audit"
+                    ? "جاري التدقيق الحسابي والمنهجي والتعميق..."
+                    : "تدقيق حسابي وتعميق أكاديمي شامل (المرحلة 2)"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleRefine("humanize_academic")}
+                  disabled={generating || refiningMode !== null}
+                  className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-white hover:bg-emerald-50 border border-emerald-300 text-emerald-900 font-bold text-xs disabled:opacity-60"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  {refiningMode === "humanize_academic"
+                    ? "جاري أنسنة الصياغة مع تثبيت المعادلات..."
+                    : "أنسنة أكاديمية متقدمة (مع قفل الأرقام والمعادلات)"}
+                </button>
+              </div>
+
+              {solution.qualityMeta?.auditNotes && solution.qualityMeta.auditNotes.length > 0 && (
+                <div className="p-3 rounded-xl bg-white border border-emerald-200 space-y-1.5">
+                  <p className="text-[11px] font-extrabold text-emerald-900">
+                    تقرير المدقّق الأكاديمي:
+                  </p>
+                  <ul className="list-disc pr-4 space-y-1 text-[11px] text-slate-700 leading-relaxed">
+                    {solution.qualityMeta.auditNotes.map((note, idx) => (
+                      <li key={idx}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {solution.qualityMeta?.studyGuide?.summary && (
+                <div className="p-2.5 rounded-xl bg-blue-50/70 border border-blue-200 text-[11px] text-navy-800">
+                  <strong>دليل فهم الطالب جاهز:</strong> سيظهر تلقائيا للطالب في صفحة التتبع (مع {solution.qualityMeta.studyGuide.defenseQuestions.length} أسئلة مناقشة متوقعة) دون إضافته لملف Word.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Cohort Uniqueness & Similarity Checker */}
           {solution && (

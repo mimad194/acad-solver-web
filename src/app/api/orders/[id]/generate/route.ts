@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getOrderById, updateOrder } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
 import { generateSolutionWithGemini } from "@/lib/gemini-solver";
-import type { DocxThemeId, StyleProfileId } from "@/types/order";
+import type { AcademicDiscipline, DocxThemeId, StyleProfileId } from "@/types/order";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -24,17 +24,20 @@ export async function POST(
   let model = "";
   let styleProfile: StyleProfileId | undefined;
   let docxTheme: DocxThemeId | undefined;
+  let discipline: AcademicDiscipline | undefined;
   try {
     const body = (await req.json()) as {
       extraInstruction?: string;
       model?: string;
       styleProfile?: StyleProfileId;
       docxTheme?: DocxThemeId;
+      discipline?: AcademicDiscipline;
     };
     extraInstruction = body.extraInstruction?.trim() ?? "";
     model = body.model?.trim() ?? "";
     styleProfile = body.styleProfile;
     docxTheme = body.docxTheme;
+    discipline = body.discipline;
   } catch {
     // Optional JSON body
   }
@@ -45,6 +48,7 @@ export async function POST(
       preferredModel: model || undefined,
       styleProfile,
       docxTheme,
+      discipline,
     });
     const updated = await updateOrder(id, (cur) => ({
       ...cur,

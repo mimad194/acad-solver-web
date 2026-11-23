@@ -3,11 +3,14 @@
 import React, { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
+  BookOpenCheck,
   CheckCircle2,
   Clock,
   Download,
   FileCheck2,
+  HelpCircle,
   Search,
+  ShieldCheck,
   AlertCircle,
 } from "lucide-react";
 import { OrderStatus, SolutionDocument } from "@/types/order";
@@ -210,6 +213,72 @@ function TrackContent() {
               </div>
             )}
           </section>
+
+          {/* Student Value-Added Study & Oral Defense Guide */}
+          {order.status === "completed" &&
+            order.solution?.qualityMeta?.studyGuide &&
+            (order.solution.qualityMeta.studyGuide.summary ||
+              order.solution.qualityMeta.studyGuide.keyPoints.length > 0) && (
+              <section className="bg-gradient-to-b from-navy-50/70 to-white border border-navy-200 rounded-2xl p-6 shadow-sm space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-navy-100">
+                  <h3 className="text-base sm:text-lg font-extrabold text-navy-800 flex items-center gap-2">
+                    <BookOpenCheck className="w-5 h-5 text-navy-700" />
+                    دليل الفهم السريع والاستعداد للمناقشة (ميزة حصرية للطالب)
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    {order.solution.qualityMeta.auditPassApplied && (
+                      <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        مدقّق حسابيا ومنهجيا على مرحلتين
+                      </span>
+                    )}
+                    <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-500">
+                      لا يُطبع داخل ملف Word
+                    </span>
+                  </div>
+                </div>
+
+                {order.solution.qualityMeta.studyGuide.summary && (
+                  <p className="text-sm text-slate-700 leading-relaxed">
+                    {order.solution.qualityMeta.studyGuide.summary}
+                  </p>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {order.solution.qualityMeta.studyGuide.keyPoints.length > 0 && (
+                    <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+                      <h4 className="font-extrabold text-xs text-navy-800">
+                        أهم القوانين والمرتكزات المعتمدة في الحل
+                      </h4>
+                      <ul className="list-disc pr-4 space-y-1.5 text-xs text-slate-700 leading-relaxed">
+                        {order.solution.qualityMeta.studyGuide.keyPoints.map((pt, i) => (
+                          <li key={i}>{pt}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {order.solution.qualityMeta.studyGuide.defenseQuestions.length > 0 && (
+                    <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+                      <h4 className="font-extrabold text-xs text-navy-800 flex items-center gap-1.5">
+                        <HelpCircle className="w-3.5 h-3.5 text-navy-600" />
+                        أسئلة مناقشة متوقعة من الأستاذ وإجاباتها السريعة
+                      </h4>
+                      <ul className="space-y-2 text-xs text-slate-700 leading-relaxed">
+                        {order.solution.qualityMeta.studyGuide.defenseQuestions.map((q, i) => (
+                          <li
+                            key={i}
+                            className="p-2.5 rounded-lg bg-slate-50 border border-slate-100"
+                          >
+                            {q}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
 
           {/* Approved Solution Preview */}
           {order.status === "completed" && order.solution && (

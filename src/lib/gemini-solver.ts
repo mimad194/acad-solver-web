@@ -1,17 +1,23 @@
 import crypto from "crypto";
 import type {
+  AcademicDiscipline,
   DocumentBlock,
   DocxThemeId,
+  QualityAuditMeta,
+  RefineMode,
   SolutionDocument,
   StudentOrder,
+  StudyGuideMeta,
   StyleProfileId,
 } from "@/types/order";
 import { listOrders, readUploadedFileBuffer } from "./store";
+import { extractProseText, pickAutoStyleAndTheme } from "./style-profiles";
 import {
-  extractProseText,
-  getStyleProfile,
-  pickAutoStyleAndTheme,
-} from "./style-profiles";
+  buildStage1SystemPrompt,
+  buildStage2AuditPrompt,
+  buildStage2HumanizePrompt,
+  detectAcademicDiscipline,
+} from "./expert-prompts";
 
 const SUPPORTED_INLINE_MIMES = new Set([
   "application/pdf",
@@ -148,92 +154,10 @@ async function collectSiblingSnippets(order: StudentOrder): Promise<string[]> {
   }
 }
 
-function buildSystemInstruction(
-  order: StudentOrder,
-  styleId: StyleProfileId,
-  siblingSnippets: string[],
-  extraInstruction?: string
-): string {
-  const style = getStyleProfile(styleId);
-  const strictRule = order.strictReferencesOnly
-    ? "- اعتمد حصريا وبشكل صارم على المراجع والمطبوعات والدروس المرفقة مع الطلب فقط (القوانين، الرموز، سلالم التفسير، وطريقة الحل)، دون أي توسع أو استيراد طرق أو مصطلحات من خارج المراجع المرفوعة."
-    : "- اعتمد أساسا على المراجع المرفقة مع الطلب مع التوضيح المنهجي الدقيق عند الضرورة.";
-
-  const antiDuplicateSection =
-    siblingSnippets.length > 0
-      ? `\nتنويع الصياغة ومنع التكرار داخل نفس الدفعة:
-سبق إعداد حلول أخرى في نفس المقياس، لذلك يُشترط ألا تعيد استخدام نفس التراكيب اللغوية أو افتتاحيات الفقرات أو نفس صياغة التعليقات الواردة في المقتطفات المرجعية التالية (حافظ على صحة الأرقام والقوانين فقط، وغيّر كليا أسلوب الصياغة وبنية العرض والربط بين الأفكار):
-${siblingSnippets.map((s, i) => `--- مقتطف أسلوب سابق (${i + 1}) يجب الابتعاد عن صياغته ---\n${s}`).join("\n")}\n`
-      : "";
-
-  return `أنت أستاذ جامعي وباحث متخصص في إعداد حلول الأنشطة والأعمال الموجهة لطلبة الماستر باللغة العربية الأكاديمية الأصيلة.
-
-المطلوب إعداد حل شامل، دقيق، مفصّل، ومُعدّ خصيصا لهذا الطلب بصيغة JSON مهيكلة لتتحول مباشرة إلى ملف Word عربي RTL احترافي.
-
-1) قواعد الشمولية والدقة العلمية (إلزامية — ممنوع الاختصار):
-${strictRule}
-- أجب عن **كل تمرين وكل سؤال وكل فرع** واردة في نص التمرين أو ملفه دون حذف أو اختصار أي مطلوب.
-- أدرج جميع **الجداول الحسابية الوسيطة** كاملة بجميع صفوفها وصف المجموع (مثل جدول الانحرافات، جدول القيم المقدرة والبواقي، جدول تحليل التباين ANOVA، جدول اختبارات المعنوية... إلخ متى تطلب التمرين ذلك).
-- في كل خطوة حسابية: اعرض القانون الرمزي أولا، ثم التعويض العددي الواضح، ثم النتيجة النهائية (مع تقريب متسق إلى ${style.suggestedDecimals} أرقام بعد الفاصلة عند الحاجة)، وتحقّق رياضيا من كل جمع وطرح وضرب وقسمة قبل كتابة النتيجة.
-- قدّم تحليلا وتفسيرا أكاديميا وإداريا/اقتصاديا وافيا بعد كل نتيجة رقمية بالاستناد إلى سلم التفسير الوارد في المراجع المرفوعة.
-
-2) قواعد الأسلوب الأكاديمي الطبيعي والأصالة اللغوية:
-- نمط التحرير المختار لهذا الطلب (${style.label}): ${style.promptDirective}
-- اكتب بلغة طالب جامعي متمكن يعبّر بأسلوب طبيعي مباشر وهادئ، مع **تفاوت طبيعي في طول الجمل** (مزيج متوازن بين الجمل القصيرة الحاسمة والجمل التحليلية المركبة) وربط مباشر بأرقام ووقائع الحالة المدروسة.
-- يُمنع منعا باتا استخدام الكليشيهات النمطية الآلية المكررة مثل: ("في الختام"، "تجدر الإشارة إلى أنه"، "مما لا شك فيه"، "يتضح جليا"، "بناءً على ما سبق يتبين"، "يُعدّ ... ركيزة أساسية"، "من الجدير بالذكر"، "في عالم الأعمال المعاصر") أو الرموز التعبيرية أو التماثل الرتيب في بداية الفقرات.
-- عند وجود أكثر من صيغة رياضية متكافئة داخل المراجع المرفوعة (مثل حساب المعاملات بالانحرافات أو بالمجاميع الخام، أو حساب معامل التحديد عبر SCE/SCT أو 1-SCR/SCT)، اختر الصيغة الأنسب لهذا الأسلوب لتنويع طريقة العرض المنهجية مع ضمان تطابق النتائج الرياضية تماما.
-${antiDuplicateSection}
-3) قواعد تنسيق المعادلات والجداول ومخطط JSON:
-- اكتب جميع المعادلات الرياضية والإحصائية بصيغة LaTeX قياسية ونظيفة:
-  * داخل الفقرات والنقاط وخلايا الجداول: ضع الرموز والمعادلات القصيرة بين علامتي دولار مفردتين مثل $\\hat{\\beta}_1 = 16.7302$ أو $R^2 = 99.40\\%$.
-  * للمعادلات المستقلة: استخدم كتلة من نوع "equation" وضع فيها نص LaTeX فقط (بدون $$ وبدون أي أحرف عربية داخل نص LaTeX).
-  * عند كتابة الجداول: رتب الأعمدة من اليمين إلى اليسار (أول عمود في المصفوفة سيظهر أقصى اليمين في Word RTL).
-- أعد الرد بصيغة JSON صالحة فقط تطابق هذا المخطط تماما:
-{
-  "title": "عنوان الحل",
-  "blocks": [
-    { "type": "doc_title", "text": "حل النشاط..." },
-    { "type": "exercise_heading", "text": "التمرين (01)" },
-    { "type": "question_heading", "text": "1) عنوان السؤال..." },
-    { "type": "sub_heading", "text": "عنوان فرعي..." },
-    { "type": "paragraph", "text": "نص الفقرة مع معادلات مضمنة مثل $R^2 = 0.994$..." },
-    { "type": "bullet", "text": "**عنوان نقطي:** شرح واضح ومباشر..." },
-    { "type": "equation", "latex": "\\\\hat{Y}_i = 129.0145 + 16.7302 X_{1i}", "callout": true },
-    { "type": "table", "caption": "عنوان الجدول اختياري", "headers": ["عمود 1", "$X_1$"], "rows": [["قيمة", "10"]], "hasTotalRow": true }
-  ]
-}
-${extraInstruction ? `\nتوجيه إضافي خاص من المشرف:\n${extraInstruction}` : ""}`;
-}
-
-export interface GenerateOptions {
-  extraInstruction?: string;
-  preferredModel?: string;
-  styleProfile?: StyleProfileId;
-  docxTheme?: DocxThemeId;
-}
-
-export async function generateSolutionWithGemini(
-  order: StudentOrder,
-  options: GenerateOptions = {}
-): Promise<{ solution: SolutionDocument; usedModel: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error(
-      "لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة. يرجى إضافته لتفعيل التوليد الآلي بالذكاء الاصطناعي."
-    );
-  }
-
-  const auto = pickAutoStyleAndTheme(`${order.id}-${order.trackingCode}`);
-  const chosenStyle: StyleProfileId = options.styleProfile ?? auto.styleProfile;
-  const chosenTheme: DocxThemeId = options.docxTheme ?? auto.docxTheme;
-
-  const firstChoice =
-    options.preferredModel?.trim() ||
-    process.env.GEMINI_MODEL?.trim() ||
-    "gemini-4-hydrogen";
-
-  const siblingSnippets = await collectSiblingSnippets(order);
-
+async function buildOrderAttachmentParts(
+  apiKey: string,
+  order: StudentOrder
+): Promise<Array<Record<string, unknown>>> {
   const parts: Array<Record<string, unknown>> = [];
 
   const contextLines = [
@@ -249,7 +173,6 @@ export async function generateSolutionWithGemini(
 
   parts.push({ text: contextLines });
 
-  // Attach uploaded exercise and reference files (PDF / Images / Text)
   for (const meta of order.files) {
     const buf = await readUploadedFileBuffer(meta.storedName, meta.blobUrl);
     if (!buf) continue;
@@ -295,26 +218,42 @@ export async function generateSolutionWithGemini(
     }
   }
 
-  parts.push({
-    text: "قم الآن بحل التمرين كاملا بكل تفاصيله وجداوله الوسيطة وتحليلاته وفق الأسلوب المطلوب وأعد JSON المهيكَل فقط.",
-  });
+  return parts;
+}
+
+interface RawGeminiJson {
+  title?: string;
+  verifiedQuestionsCount?: number;
+  auditNotes?: unknown[];
+  blocks?: Array<Record<string, unknown>>;
+  studyGuide?: {
+    summary?: string;
+    keyPoints?: unknown[];
+    defenseQuestions?: unknown[];
+  };
+}
+
+async function callGeminiJsonWithFallback(params: {
+  apiKey: string;
+  systemText: string;
+  userParts: Array<Record<string, unknown>>;
+  preferredModel?: string;
+  temperature?: number;
+}): Promise<{ parsed: RawGeminiJson; usedModel: string }> {
+  const { apiKey, systemText, userParts, preferredModel, temperature = 0.4 } = params;
+
+  const firstChoice =
+    preferredModel?.trim() ||
+    process.env.GEMINI_MODEL?.trim() ||
+    "gemini-4-hydrogen";
 
   const requestPayload = JSON.stringify({
     systemInstruction: {
-      parts: [
-        {
-          text: buildSystemInstruction(
-            order,
-            chosenStyle,
-            siblingSnippets,
-            options.extraInstruction
-          ),
-        },
-      ],
+      parts: [{ text: systemText }],
     },
-    contents: [{ role: "user", parts }],
+    contents: [{ role: "user", parts: userParts }],
     generationConfig: {
-      temperature: 0.45,
+      temperature,
       maxOutputTokens: 16384,
       responseMimeType: "application/json",
     },
@@ -395,12 +334,12 @@ export async function generateSolutionWithGemini(
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/, "");
 
-  const parsed = JSON.parse(cleaned) as {
-    title?: string;
-    blocks?: Array<Record<string, unknown>>;
-  };
+  const parsed = JSON.parse(cleaned) as RawGeminiJson;
+  return { parsed, usedModel };
+}
 
-  const blocks: DocumentBlock[] = (parsed.blocks ?? []).map((b) => {
+function normalizeBlocks(rawBlocks?: Array<Record<string, unknown>>): DocumentBlock[] {
+  return (rawBlocks ?? []).map((b) => {
     const id = crypto.randomUUID();
     const type = String(b.type ?? "paragraph");
     if (type === "equation") {
@@ -434,12 +373,102 @@ export async function generateSolutionWithGemini(
     }
     return { id, type: "paragraph", text: String(b.text ?? "") };
   });
+}
+
+function normalizeStudyGuide(
+  raw?: RawGeminiJson["studyGuide"],
+  fallback?: StudyGuideMeta
+): StudyGuideMeta | undefined {
+  if (!raw || (!raw.summary && !raw.keyPoints?.length && !raw.defenseQuestions?.length)) {
+    return fallback;
+  }
+  return {
+    summary: String(raw.summary ?? fallback?.summary ?? "").trim(),
+    keyPoints: Array.isArray(raw.keyPoints)
+      ? raw.keyPoints.map((x) => String(x).trim()).filter(Boolean).slice(0, 6)
+      : fallback?.keyPoints ?? [],
+    defenseQuestions: Array.isArray(raw.defenseQuestions)
+      ? raw.defenseQuestions.map((x) => String(x).trim()).filter(Boolean).slice(0, 5)
+      : fallback?.defenseQuestions ?? [],
+  };
+}
+
+function stripBlockIds(blocks: DocumentBlock[]): Array<Record<string, unknown>> {
+  return blocks.map((b) => {
+    const copy = { ...b } as Record<string, unknown>;
+    delete copy.id;
+    return copy;
+  });
+}
+
+export interface GenerateOptions {
+  extraInstruction?: string;
+  preferredModel?: string;
+  styleProfile?: StyleProfileId;
+  docxTheme?: DocxThemeId;
+  discipline?: AcademicDiscipline;
+}
+
+export async function generateSolutionWithGemini(
+  order: StudentOrder,
+  options: GenerateOptions = {}
+): Promise<{ solution: SolutionDocument; usedModel: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة. يرجى إضافته لتفعيل التوليد الآلي بالذكاء الاصطناعي."
+    );
+  }
+
+  const auto = pickAutoStyleAndTheme(`${order.id}-${order.trackingCode}`);
+  const chosenStyle: StyleProfileId = options.styleProfile ?? auto.styleProfile;
+  const chosenTheme: DocxThemeId = options.docxTheme ?? auto.docxTheme;
+  const resolvedDiscipline = detectAcademicDiscipline(order, options.discipline);
+
+  const [siblingSnippets, parts] = await Promise.all([
+    collectSiblingSnippets(order),
+    buildOrderAttachmentParts(apiKey, order),
+  ]);
+
+  parts.push({
+    text: "قم الآن بحل التمرين كاملا بكل تفاصيله وجداوله الوسيطة وتحليلاته العميقة وفق بروتوكول التخصص والأسلوب المطلوبين، مع توليد studyGuide للطالب، وأعد JSON المهيكَل فقط.",
+  });
+
+  const systemText = buildStage1SystemPrompt({
+    order,
+    styleId: chosenStyle,
+    discipline: resolvedDiscipline,
+    siblingSnippets,
+    extraInstruction: options.extraInstruction,
+  });
+
+  const { parsed, usedModel } = await callGeminiJsonWithFallback({
+    apiKey,
+    systemText,
+    userParts: parts,
+    preferredModel: options.preferredModel,
+    temperature: 0.42,
+  });
+
+  const blocks = normalizeBlocks(parsed.blocks);
+  const qualityMeta: QualityAuditMeta = {
+    discipline: resolvedDiscipline,
+    auditPassApplied: false,
+    humanizedPassApplied: false,
+    verifiedQuestionsCount:
+      typeof parsed.verifiedQuestionsCount === "number"
+        ? parsed.verifiedQuestionsCount
+        : undefined,
+    auditNotes: [],
+    studyGuide: normalizeStudyGuide(parsed.studyGuide),
+  };
 
   const solution: SolutionDocument = {
     title: parsed.title || `حل ${order.assignmentTitle}`,
     includeCoverPage: order.includeCoverPage,
     styleProfile: chosenStyle,
     docxTheme: chosenTheme,
+    qualityMeta,
     coverMeta: {
       university: order.university,
       specialty: order.specialty,
@@ -452,4 +481,132 @@ export async function generateSolutionWithGemini(
   };
 
   return { solution, usedModel };
+}
+
+export interface RefineOptions {
+  mode: RefineMode;
+  extraInstruction?: string;
+  preferredModel?: string;
+  styleProfile?: StyleProfileId;
+  discipline?: AcademicDiscipline;
+}
+
+export async function refineSolutionWithGemini(
+  order: StudentOrder,
+  options: RefineOptions
+): Promise<{ solution: SolutionDocument; usedModel: string; auditNotes: string[] }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة.");
+  }
+  if (!order.solution) {
+    throw new Error("لا توجد مسودة حل حالية لتدقيقها أو تحسينها.");
+  }
+
+  const current = order.solution;
+  const chosenStyle: StyleProfileId =
+    options.styleProfile ??
+    current.styleProfile ??
+    pickAutoStyleAndTheme(`${order.id}-${order.trackingCode}`).styleProfile;
+  const resolvedDiscipline = detectAcademicDiscipline(
+    order,
+    options.discipline ?? current.qualityMeta?.discipline
+  );
+
+  const currentDraftJson = JSON.stringify({
+    title: current.title,
+    blocks: stripBlockIds(current.blocks),
+    studyGuide: current.qualityMeta?.studyGuide,
+  });
+
+  let systemText = "";
+  let userParts: Array<Record<string, unknown>> = [];
+  let temperature = 0.35;
+
+  if (options.mode === "deepen_and_audit") {
+    systemText = buildStage2AuditPrompt({
+      order,
+      styleId: chosenStyle,
+      discipline: resolvedDiscipline,
+      extraInstruction: options.extraInstruction,
+    });
+    userParts = await buildOrderAttachmentParts(apiKey, order);
+    userParts.push({
+      text: `مسودة الحل الحالية (المرحلة الأولى) المطلوب تدقيقها حسابيا ومنهجيا وتعميقها ومقارنتها بملفات التمرين والمراجع أعلاه:\n${currentDraftJson}`,
+    });
+    temperature = 0.28;
+  } else if (options.mode === "humanize_academic") {
+    const siblingSnippets = await collectSiblingSnippets(order);
+    systemText = buildStage2HumanizePrompt({
+      styleId: chosenStyle,
+      siblingSnippets,
+      extraInstruction: options.extraInstruction,
+    });
+    userParts = [
+      {
+        text: `المقياس: ${order.moduleName} | النشاط: ${order.assignmentTitle}\n\nوثيقة الحل الحالية (أعد صياغة النثر بأسلوب بشري أكاديمي طبيعي مع تثبيت جميع الأرقام والمعادلات والجداول 100%):\n${currentDraftJson}`,
+      },
+    ];
+    temperature = 0.6;
+  } else {
+    systemText = `أنت أستاذ مؤطر تعدّ "دليل فهم ومناقشة سريعة" (studyGuide) لطالب ماستر بناء على حل النشاط المعتمد، ليفهم الطالب منهجية الحل والقوانين المستعملة ويستعد لأسئلة الأستاذ الشفوية. أعد JSON فقط بالشكل: { "studyGuide": { "summary": "...", "keyPoints": ["..."], "defenseQuestions": ["..."] } }`;
+    userParts = [
+      {
+        text: `المقياس: ${order.moduleName} | النشاط: ${order.assignmentTitle}\n\nالحل المعتمد:\n${currentDraftJson}`,
+      },
+    ];
+    temperature = 0.4;
+  }
+
+  const { parsed, usedModel } = await callGeminiJsonWithFallback({
+    apiKey,
+    systemText,
+    userParts,
+    preferredModel: options.preferredModel,
+    temperature,
+  });
+
+  const newNotes = Array.isArray(parsed.auditNotes)
+    ? parsed.auditNotes.map((n) => String(n).trim()).filter(Boolean)
+    : [];
+
+  const updatedBlocks =
+    options.mode === "enrich_study_guide"
+      ? current.blocks
+      : parsed.blocks && parsed.blocks.length > 0
+      ? normalizeBlocks(parsed.blocks)
+      : current.blocks;
+
+  const prevMeta = current.qualityMeta;
+  const mergedMeta: QualityAuditMeta = {
+    discipline: resolvedDiscipline,
+    auditPassApplied:
+      options.mode === "deepen_and_audit"
+        ? true
+        : Boolean(prevMeta?.auditPassApplied),
+    humanizedPassApplied:
+      options.mode === "humanize_academic"
+        ? true
+        : Boolean(prevMeta?.humanizedPassApplied),
+    verifiedQuestionsCount:
+      typeof parsed.verifiedQuestionsCount === "number"
+        ? parsed.verifiedQuestionsCount
+        : prevMeta?.verifiedQuestionsCount,
+    auditNotes:
+      newNotes.length > 0
+        ? newNotes.slice(0, 6)
+        : prevMeta?.auditNotes ?? [],
+    studyGuide: normalizeStudyGuide(parsed.studyGuide, prevMeta?.studyGuide),
+  };
+
+  const solution: SolutionDocument = {
+    ...current,
+    title: parsed.title || current.title,
+    styleProfile: chosenStyle,
+    qualityMeta: mergedMeta,
+    blocks: updatedBlocks,
+    updatedAt: new Date().toISOString(),
+  };
+
+  return { solution, usedModel, auditNotes: mergedMeta.auditNotes ?? [] };
 }

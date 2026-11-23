@@ -18,6 +18,33 @@ export type DocxThemeId =
   | "burgundy_formal"      // عنابي جامعي رسمي (Traditional Arabic)
   | "print_bw";            // أبيض وأسود كلاسيكي للطباعة (Simplified Arabic)
 
+export type AcademicDiscipline =
+  | "auto"                 // كشف تلقائي حسب المقياس والملفات
+  | "quantitative"         // كمي / إحصاء / تحليل معطيات / قياسي / مالية
+  | "case_study"           // دراسة حالة / تسيير / استراتيجية / تسويق
+  | "theoretical_essay"    // بحث / مقال أكاديمي / أسئلة نظرية ومقارنة
+  | "accounting_legal";    // محاسبة / تدقيق / قانون / جباية
+
+export type RefineMode =
+  | "deepen_and_audit"     // تدقيق حسابي ومنهجي وتعميق شامل (المرحلة 2)
+  | "humanize_academic"    // أنسنة أكاديمية للنثر مع تثبيت الأرقام والمعادلات
+  | "enrich_study_guide";  // توليد/تحديث دليل الفهم والمناقشة للطالب
+
+export interface StudyGuideMeta {
+  summary: string;
+  keyPoints: string[];
+  defenseQuestions: string[];
+}
+
+export interface QualityAuditMeta {
+  discipline: Exclude<AcademicDiscipline, "auto">;
+  auditPassApplied: boolean;
+  humanizedPassApplied?: boolean;
+  verifiedQuestionsCount?: number;
+  auditNotes?: string[];
+  studyGuide?: StudyGuideMeta;
+}
+
 export interface UploadedFileMeta {
   id: string;
   originalName: string;
@@ -80,6 +107,7 @@ export interface SolutionDocument {
   includeCoverPage: boolean;
   styleProfile?: StyleProfileId;
   docxTheme?: DocxThemeId;
+  qualityMeta?: QualityAuditMeta;
   coverMeta?: {
     university?: string;
     specialty?: string;
