@@ -3,6 +3,47 @@ export type OrderStatus =
   | "in_review"    // قيد المعالجة والمراجعة
   | "completed";   // مكتمل وجاهز للتحميل
 
+export type PackageId = "standard" | "premium" | "semester";
+
+export type PaymentStatus =
+  | "unpaid"            // بانتظار الدفع
+  | "receipt_submitted" // تم رفع وصل الدفع (للمراجعة)
+  | "paid"              // تم تأكيد الدفع
+  | "waived";           // مجاني / معفى
+
+export interface PaymentReceiptMeta {
+  originalName: string;
+  storedName?: string;
+  blobUrl?: string;
+  mimeType: string;
+  size?: number;
+  referenceNote?: string;
+  uploadedAt: string;
+}
+
+export interface PricingPackage {
+  id: PackageId;
+  name: string;
+  badge?: string;
+  priceDzd: number;
+  subtitle: string;
+  features: string[];
+  highlighted?: boolean;
+}
+
+export interface PublicAppConfig {
+  currency: string;
+  packages: PricingPackage[];
+  cohortMaxSlots: number;
+  previewLockEnabled: boolean;
+  payment: {
+    baridimobRip: string;
+    ccpAccount: string;
+    accountName: string;
+  };
+  supportWhatsapp: string;
+}
+
 export type StyleProfileId =
   | "analytical_narrative" // تحليلي سردي مترابط
   | "concise_direct"       // منهجي موجز ومباشر
@@ -132,6 +173,11 @@ export interface StudentOrder {
   notes: string;
   includeCoverPage: boolean;
   strictReferencesOnly: boolean;
+  packageId?: PackageId;
+  priceDzd?: number;
+  paymentStatus?: PaymentStatus;
+  paymentReceipt?: PaymentReceiptMeta | null;
+  paidAt?: string | null;
   status: OrderStatus;
   adminNote: string;
   files: UploadedFileMeta[];

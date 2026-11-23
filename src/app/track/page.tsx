@@ -2,18 +2,30 @@
 
 import React, { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import {
   BookOpenCheck,
   CheckCircle2,
   Clock,
+  Copy,
+  CreditCard,
   Download,
   FileCheck2,
+  FileUp,
   HelpCircle,
+  Lock,
+  MessageCircle,
   Search,
   ShieldCheck,
   AlertCircle,
 } from "lucide-react";
-import { OrderStatus, SolutionDocument } from "@/types/order";
+import {
+  OrderStatus,
+  PackageId,
+  PaymentStatus,
+  PublicAppConfig,
+  SolutionDocument,
+} from "@/types/order";
 import SolutionPreview from "@/components/SolutionPreview";
 
 interface TrackedOrder {
@@ -26,6 +38,17 @@ interface TrackedOrder {
   assignmentTitle: string;
   status: OrderStatus;
   adminNote: string;
+  packageId?: PackageId;
+  priceDzd: number | null;
+  paymentStatus: PaymentStatus;
+  paymentReceipt: {
+    originalName: string;
+    uploadedAt: string;
+    referenceNote?: string;
+  } | null;
+  isPaymentUnlocked: boolean;
+  totalBlocksCount: number;
+  hasStudyGuide: boolean;
   createdAt: string;
   updatedAt: string;
   filesCount: number;
@@ -38,6 +61,16 @@ const STEPS: Array<{ key: OrderStatus; label: string; desc: string }> = [
   { key: "completed", label: "مكتمل وجاهز للتحميل", desc: "تم اعتماد الحل وتجهيز ملف Word RTL" },
 ];
 
+const PAYMENT_BADGE: Record<PaymentStatus, { label: string; cls: string }> = {
+  unpaid: { label: "بانتظار الدفع", cls: "bg-amber-100 text-amber-800" },
+  receipt_submitted: {
+    label: "تم رفع الوصل — قيد التأكيد",
+    cls: "bg-blue-100 text-blue-800",
+  },
+  paid: { label: "تم تأكيد الدفع ✓", cls: "bg-emerald-100 text-emerald-800" },
+  waived: { label: "مفتوح مجانا ✓", cls: "bg-emerald-100 text-emerald-800" },
+};
+
 function TrackContent() {
   const searchParams = useSearchParams();
   const initialCode = searchParams.get("code") ?? "";
@@ -45,20 +78,31 @@ function TrackContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [order, setOrder] = useState<TrackedOrder | null>(null);
+  const [config, setConfig] = useState<PublicAppConfig | null>(null);
+
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [referenceNote, setReferenceNote] = useState("");
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
+  const [receiptMsg, setReceiptMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [copiedRip, setCopiedRip] = useState(false);
 
   const fetchOrder = useCallback(async (targetCode: string) => {
     const clean = targetCode.trim();
     if (!clean) return;
     setLoading(true);
     setError("");
+    setReceiptMsg(null);
     try {
-      const res = await fetch(`/api/orders/track?code=${encodeURIComponent(clean)}`);
+      const res = await fetch(`/api/orders/track?code=${encodeURIComponent(clean)}`, {
+        cache: "no-store",
+      });
       const data = await res.json();
       if (!res.ok) {
         setOrder(null);
         throw new Error(data.error || "الطلب غير موجود.");
       }
       setOrder(data.order);
+      if (data.config) setConfig(data.config);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر البحث عن الطلب.");
     } finally {
@@ -72,9 +116,99 @@ function TrackContent() {
     }
   }, [initialCode, fetchOrder]);
 
+  const handleReceiptSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!order) return;
+    if (!receiptFile && !referenceNote.trim()) {
+      setReceiptMsg({
+        type: "err",
+        text: "يرجى إرفاق صورة/ملف وصل BaridiMob أو كتابة رقم مرجع التحويل.",
+      });
+      return;
+    }
+
+    setUploadingReceipt(true);
+    setReceiptMsg(null);
+    try {
+      let res: Response;
+      let blobEnabled = false;
+      try {
+        const cfgRes = await fetch("/api/upload", { cache: "no-store" });
+        if (cfgRes.ok) {
+          const cfg = (await cfgRes.json()) as { blobEnabled?: boolean };
+          blobEnabled = Boolean(cfg.blobEnabled);
+        }
+      } catch {
+        blobEnabled = false;
+      }
+
+      if (receiptFile && blobEnabled) {
+        const extMatch = receiptFile.name.match(/\.[a-zA-Z0-9]+$/);
+        const safeExt = extMatch ? extMatch[0].toLowerCase() : ".jpg";
+        const pathname = `acad-solver/uploads/receipt-${order.trackingCode}-${Date.now()}${safeExt}`;
+        const blob = await upload(pathname, receiptFile, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
+        });
+        res = await fetch("/api/orders/track/receipt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            trackingCode: order.trackingCode,
+            referenceNote: referenceNote.trim(),
+            receipt: {
+              originalName: receiptFile.name,
+              storedName: blob.pathname.split("/").pop() || receiptFile.name,
+              blobUrl: blob.url,
+              mimeType: receiptFile.type || blob.contentType || "image/jpeg",
+              size: receiptFile.size,
+            },
+          }),
+        });
+      } else {
+        const fd = new FormData();
+        fd.append("trackingCode", order.trackingCode);
+        fd.append("referenceNote", referenceNote.trim());
+        if (receiptFile) fd.append("receiptFile", receiptFile);
+        res = await fetch("/api/orders/track/receipt", { method: "POST", body: fd });
+      }
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر إرسال وصل الدفع.");
+
+      setReceiptFile(null);
+      setReferenceNote("");
+      setReceiptMsg({
+        type: "ok",
+        text: "تم استلام وصل الدفع وإشعار المشرف فورا! سيتم تأكيده وفتح التحميل الكامل خلال دقائق.",
+      });
+      await fetchOrder(order.trackingCode);
+    } catch (err) {
+      setReceiptMsg({
+        type: "err",
+        text: err instanceof Error ? err.message : "حدث خطأ أثناء رفع الوصل.",
+      });
+    } finally {
+      setUploadingReceipt(false);
+    }
+  };
+
   const activeStepIdx = order
     ? STEPS.findIndex((s) => s.key === order.status)
     : -1;
+
+  const currency = config?.currency || "دج";
+  const matchedPkg = config?.packages.find((p) => p.id === order?.packageId);
+  const payBadge = order ? PAYMENT_BADGE[order.paymentStatus] : null;
+  const showPaymentCard =
+    order && (!order.isPaymentUnlocked || order.paymentStatus === "receipt_submitted");
+
+  const whatsappHref =
+    order && config?.supportWhatsapp
+      ? `https://wa.me/${config.supportWhatsapp}?text=${encodeURIComponent(
+          `السلام عليكم، بخصوص طلبي رقم ${order.trackingCode} (${order.moduleName} - ${order.assignmentTitle})`
+        )}`
+      : null;
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -85,7 +219,7 @@ function TrackContent() {
             متابعة حالة الطلب وتحميل الحل
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            أدخل رمز التتبع الذي حصلت عليه عند إرسال الطلب لمعرفة حالته وتحميل ملف Word (.docx) فور اعتماده.
+            أدخل رمز التتبع الذي حصلت عليه عند إرسال الطلب لمعرفة حالته، معاينة الجزء الأول من الحل، ورفع وصل الدفع لتحميل ملف Word (.docx).
           </p>
         </div>
 
@@ -142,10 +276,15 @@ function TrackContent() {
           <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span dir="ltr" className="font-mono text-xs font-bold px-2.5 py-1 rounded bg-navy-50 text-navy-700">
                     {order.trackingCode}
                   </span>
+                  {payBadge && order.priceDzd !== null && (
+                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${payBadge.cls}`}>
+                      {payBadge.label}
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400">
                     {new Date(order.createdAt).toLocaleDateString("ar-DZ")}
                   </span>
@@ -157,16 +296,32 @@ function TrackContent() {
                   {order.moduleName} — {order.studentName}
                   {order.specialty ? ` (${order.specialty})` : ""}
                 </p>
+                {order.priceDzd !== null && (
+                  <p className="text-xs text-slate-500 mt-1">
+                    الباقة: <strong className="text-navy-800">{matchedPkg?.name ?? order.packageId}</strong> •{" "}
+                    المبلغ: <strong className="text-navy-800">{order.priceDzd.toLocaleString("fr-DZ")} {currency}</strong>
+                  </p>
+                )}
               </div>
 
               {order.status === "completed" && order.solution && (
-                <a
-                  href={`/api/orders/${order.id}/export?code=${encodeURIComponent(order.trackingCode)}`}
-                  className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-sm transition-colors shrink-0"
-                >
-                  <Download className="w-4 h-4" />
-                  تحميل ملف Word (.docx)
-                </a>
+                order.isPaymentUnlocked ? (
+                  <a
+                    href={`/api/orders/${order.id}/export?code=${encodeURIComponent(order.trackingCode)}`}
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-sm transition-colors shrink-0"
+                  >
+                    <Download className="w-4 h-4" />
+                    تحميل ملف Word (.docx)
+                  </a>
+                ) : (
+                  <a
+                    href="#payment-box"
+                    className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm shadow-sm transition-colors shrink-0"
+                  >
+                    <Lock className="w-4 h-4" />
+                    أكمل الدفع لفتح تحميل Word
+                  </a>
+                )
               )}
             </div>
 
@@ -214,8 +369,153 @@ function TrackContent() {
             )}
           </section>
 
-          {/* Student Value-Added Study & Oral Defense Guide */}
+          {/* BaridiMob / CCP Payment & Receipt Upload Box */}
+          {showPaymentCard && (
+            <section
+              id="payment-box"
+              className="bg-gradient-to-b from-amber-50/70 to-white border border-amber-200 rounded-2xl p-6 shadow-sm space-y-4"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-amber-100">
+                <h3 className="text-base sm:text-lg font-extrabold text-navy-800 flex items-center gap-2">
+                  <CreditCard className="w-5 h-5 text-amber-600" />
+                  إتمام الدفع عبر BaridiMob / CCP ورفع الوصل
+                </h3>
+                {order.priceDzd !== null && (
+                  <span className="text-sm font-black px-3 py-1 rounded-full bg-navy-800 text-white">
+                    {order.priceDzd.toLocaleString("fr-DZ")} {currency}
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Payment Account Info */}
+                <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2.5 text-xs">
+                  <p className="font-extrabold text-navy-800 text-sm">
+                    بيانات التحويل (BaridiMob / بريد الجزائر)
+                  </p>
+                  {config?.payment.baridimobRip || config?.payment.ccpAccount ? (
+                    <div className="space-y-2">
+                      {config.payment.baridimobRip && (
+                        <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                          <div>
+                            <span className="text-[10px] text-slate-500 block">رقم RIP (BaridiMob)</span>
+                            <span dir="ltr" className="font-mono font-extrabold text-sm text-navy-900">
+                              {config.payment.baridimobRip}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await navigator.clipboard.writeText(config.payment.baridimobRip);
+                              setCopiedRip(true);
+                              setTimeout(() => setCopiedRip(false), 2000);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-navy-700 text-white text-[11px] font-bold hover:bg-navy-600 shrink-0"
+                          >
+                            <Copy className="w-3 h-3" />
+                            {copiedRip ? "نُسخ" : "نسخ"}
+                          </button>
+                        </div>
+                      )}
+                      {config.payment.ccpAccount && (
+                        <p className="text-slate-700">
+                          <strong>حساب CCP:</strong>{" "}
+                          <span dir="ltr" className="font-mono font-bold">{config.payment.ccpAccount}</span>
+                        </p>
+                      )}
+                      {config.payment.accountName && (
+                        <p className="text-slate-700">
+                          <strong>الاسم:</strong> {config.payment.accountName}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-slate-600 leading-relaxed">
+                      يُرسل لك المشرف رقم RIP / BaridiMob عبر التواصل المسجّل في طلبك، ثم ترفع لقطة شاشة وصل التحويل هنا لفتح التحميل الكامل فورا.
+                    </p>
+                  )}
+
+                  {whatsappHref && (
+                    <a
+                      href={whatsappHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      تواصل سريع عبر WhatsApp
+                    </a>
+                  )}
+                </div>
+
+                {/* Upload Receipt Form */}
+                <form
+                  onSubmit={handleReceiptSubmit}
+                  className="bg-white rounded-xl border border-slate-200 p-4 space-y-3"
+                >
+                  <p className="font-extrabold text-navy-800 text-sm">
+                    رفع وصل الدفع (لقطة شاشة BaridiMob أو PDF)
+                  </p>
+
+                  {order.paymentReceipt && (
+                    <div className="p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-900">
+                      <strong>آخر وصل مرفوع:</strong> {order.paymentReceipt.originalName}
+                      {order.paymentReceipt.referenceNote && (
+                        <span className="block text-[11px] mt-0.5">
+                          المرجع: {order.paymentReceipt.referenceNote}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {receiptMsg && (
+                    <div
+                      className={`p-2.5 rounded-lg text-xs font-medium border ${
+                        receiptMsg.type === "ok"
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                          : "bg-red-50 border-red-200 text-red-700"
+                      }`}
+                    >
+                      {receiptMsg.text}
+                    </div>
+                  )}
+
+                  <label className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border-2 border-dashed border-slate-300 hover:border-navy-600 bg-slate-50 cursor-pointer text-xs font-bold text-navy-700">
+                    <FileUp className="w-4 h-4" />
+                    <span className="truncate">
+                      {receiptFile ? receiptFile.name : "اختيار صورة أو ملف وصل الدفع"}
+                    </span>
+                    <input
+                      type="file"
+                      accept=".png,.jpg,.jpeg,.webp,.pdf"
+                      onChange={(e) => setReceiptFile(e.target.files?.[0] ?? null)}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <input
+                    type="text"
+                    value={referenceNote}
+                    onChange={(e) => setReferenceNote(e.target.value)}
+                    placeholder="رقم مرجع العملية في BaridiMob أو ملاحظة (اختياري)"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  />
+
+                  <button
+                    type="submit"
+                    disabled={uploadingReceipt}
+                    className="w-full py-2.5 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+                  >
+                    {uploadingReceipt ? "جاري رفع الوصل..." : "إرسال وصل الدفع لتأكيده"}
+                  </button>
+                </form>
+              </div>
+            </section>
+          )}
+
+          {/* Student Value-Added Study & Oral Defense Guide (unlocked only) */}
           {order.status === "completed" &&
+            order.isPaymentUnlocked &&
             order.solution?.qualityMeta?.studyGuide &&
             (order.solution.qualityMeta.studyGuide.summary ||
               order.solution.qualityMeta.studyGuide.keyPoints.length > 0) && (
@@ -280,23 +580,54 @@ function TrackContent() {
               </section>
             )}
 
-          {/* Approved Solution Preview */}
+          {/* Approved Solution Preview (Full or Partial Free Preview Lock) */}
           {order.status === "completed" && order.solution && (
             <section className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-lg font-extrabold text-navy-800 flex items-center gap-2">
                   <FileCheck2 className="w-5 h-5 text-emerald-600" />
-                  معاينة الحل المعتمد قبل التحميل
+                  {order.isPaymentUnlocked
+                    ? "معاينة الحل المعتمد قبل التحميل"
+                    : "معاينة مجانية لأول جزء من الحل (للتحقق من الجودة قبل الدفع)"}
                 </h3>
-                <a
-                  href={`/api/orders/${order.id}/export?code=${encodeURIComponent(order.trackingCode)}`}
-                  className="text-sm font-bold text-navy-600 hover:underline flex items-center gap-1"
-                >
-                  <Download className="w-4 h-4" />
-                  تنزيل نسخة Word الأصلية
-                </a>
+                {order.isPaymentUnlocked && (
+                  <a
+                    href={`/api/orders/${order.id}/export?code=${encodeURIComponent(order.trackingCode)}`}
+                    className="text-sm font-bold text-navy-600 hover:underline flex items-center gap-1"
+                  >
+                    <Download className="w-4 h-4" />
+                    تنزيل نسخة Word الأصلية
+                  </a>
+                )}
               </div>
-              <SolutionPreview solution={order.solution} />
+
+              <div className="relative">
+                <SolutionPreview solution={order.solution} />
+
+                {!order.isPaymentUnlocked && (
+                  <div className="mt-4 bg-gradient-to-l from-navy-800 to-navy-700 text-white rounded-2xl p-6 shadow-md flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="space-y-1 text-center md:text-right">
+                      <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300">
+                        <Lock className="w-4 h-4" />
+                        تم عرض {order.solution.blocks.length} عناصر فقط من أصل {order.totalBlocksCount} عنصر
+                      </div>
+                      <h4 className="text-base sm:text-lg font-extrabold">
+                        باقي الحل وملف Word RTL الأصلي {order.hasStudyGuide ? "+ دليل الفهم والمناقشة" : ""} جاهزان للتنزيل
+                      </h4>
+                      <p className="text-xs text-slate-200">
+                        أرسل وصل التحويل عبر BaridiMob في البطاقة أعلاه، وفور تأكيده من المشرف يُفتح الحل الكامل وزر تحميل ملف Word تلقائيا.
+                      </p>
+                    </div>
+                    <a
+                      href="#payment-box"
+                      className="shrink-0 inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-sm shadow"
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      رفع وصل الدفع الآن
+                    </a>
+                  </div>
+                )}
+              </div>
             </section>
           )}
         </>

@@ -5,13 +5,16 @@ import Link from "next/link";
 import {
   ArrowRight,
   CheckCircle2,
+  CreditCard,
   Download,
   Edit3,
+  ExternalLink,
   Eye,
   FileDown,
   FilePlus,
   FileText,
   GraduationCap,
+  MessageCircle,
   Palette,
   RefreshCw,
   Save,
@@ -24,6 +27,7 @@ import {
   AcademicDiscipline,
   DocxThemeId,
   OrderStatus,
+  PaymentStatus,
   RefineMode,
   SolutionDocument,
   StudentOrder,
@@ -79,6 +83,8 @@ export default function AdminOrderWorkspacePage({
   const [order, setOrder] = useState<StudentOrder | null>(null);
   const [solution, setSolution] = useState<SolutionDocument | null>(null);
   const [status, setStatus] = useState<OrderStatus>("pending");
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>("unpaid");
+  const [priceDzd, setPriceDzd] = useState<string>("");
   const [adminNote, setAdminNote] = useState("");
   const [extraInstruction, setExtraInstruction] = useState("");
   const [selectedModel, setSelectedModel] = useState("gemini-4-hydrogen");
@@ -125,6 +131,8 @@ export default function AdminOrderWorkspacePage({
       setOrder(o);
       setSolution(o.solution);
       setStatus(o.status);
+      setPaymentStatus(o.paymentStatus ?? "paid");
+      setPriceDzd(typeof o.priceDzd === "number" ? String(o.priceDzd) : "");
       setAdminNote(o.adminNote);
       setStyleProfile(o.solution?.styleProfile ?? autoPick.styleProfile);
       setDocxTheme(o.solution?.docxTheme ?? autoPick.docxTheme);
@@ -150,11 +158,16 @@ export default function AdminOrderWorkspacePage({
     loadOrder();
   }, [loadOrder]);
 
-  const handleSave = async (overrideStatus?: OrderStatus) => {
+  const handleSave = async (
+    overrideStatus?: OrderStatus,
+    overridePaymentStatus?: PaymentStatus
+  ) => {
     if (!order) return;
     setSaving(true);
     setMessage(null);
     const nextStatus = overrideStatus ?? status;
+    const nextPaymentStatus = overridePaymentStatus ?? paymentStatus;
+    const parsedPrice = priceDzd.trim() !== "" ? Number(priceDzd) : undefined;
     const solutionToSave = solution
       ? { ...solution, styleProfile, docxTheme }
       : null;
@@ -164,6 +177,11 @@ export default function AdminOrderWorkspacePage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: nextStatus,
+          paymentStatus: nextPaymentStatus,
+          priceDzd:
+            typeof parsedPrice === "number" && Number.isFinite(parsedPrice)
+              ? parsedPrice
+              : undefined,
           adminNote,
           solution: solutionToSave,
         }),
@@ -173,6 +191,10 @@ export default function AdminOrderWorkspacePage({
       const savedOrder = data.order as StudentOrder;
       setOrder(savedOrder);
       setStatus(savedOrder.status);
+      setPaymentStatus(savedOrder.paymentStatus ?? nextPaymentStatus);
+      if (typeof savedOrder.priceDzd === "number") {
+        setPriceDzd(String(savedOrder.priceDzd));
+      }
       setSolution(savedOrder.solution);
       if (savedOrder.solution) {
         void loadSimilarity(order.id);
@@ -180,8 +202,10 @@ export default function AdminOrderWorkspacePage({
       setMessage({
         type: "ok",
         text:
-          overrideStatus === "completed"
-            ? "تم اعتماد الحل وتسليمه للطالب بنجاح! أصبح ملف Word متاحا للتحميل عبر رمز التتبع."
+          overridePaymentStatus === "paid"
+            ? "تم تأكيد استلام الدفع وفتح تحميل ملف Word الكامل للطالب بنجاح!"
+            : overrideStatus === "completed"
+            ? "تم اعتماد الحل بنجاح! أصبح جاهزا للمعاينة (أو التحميل الكامل فور تأكيد الدفع) عبر رمز التتبع."
             : "تم حفظ جميع التعديلات بنجاح.",
       });
     } catch (err) {
@@ -790,6 +814,112 @@ export default function AdminOrderWorkspacePage({
               </p>
             </div>
           )}
+
+          {/* Payment, BaridiMob Receipt & WhatsApp Notify */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+            <h2 className="font-extrabold text-navy-800 text-sm flex items-center gap-1.5 border-b border-slate-100 pb-2">
+              <CreditCard className="w-4 h-4 text-amber-600" />
+              الدفع والباقة وإشعار الطالب
+            </h2>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  حالة الدفع
+                </label>
+                <select
+                  value={paymentStatus}
+                  onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs bg-white font-medium"
+                >
+                  <option value="unpaid">بانتظار الدفع</option>
+                  <option value="receipt_submitted">وصل مرفوع للمراجعة</option>
+                  <option value="paid">مدفوع ومؤكد ✓</option>
+                  <option value="waived">مفتوح مجانا / معفى</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  المبلغ (دج)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={priceDzd}
+                  onChange={(e) => setPriceDzd(e.target.value)}
+                  placeholder="1200"
+                  className="w-full px-2.5 py-2 rounded-xl border border-slate-300 text-xs font-mono font-bold bg-white"
+                />
+              </div>
+            </div>
+
+            {order.paymentReceipt && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <strong className="text-amber-900">وصل دفع مرفوع:</strong>
+                  <a
+                    href={`/api/orders/${order.id}/receipt`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-navy-700 font-bold hover:underline"
+                  >
+                    عرض الوصل
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+                <p className="text-amber-900 truncate">{order.paymentReceipt.originalName}</p>
+                {order.paymentReceipt.referenceNote && (
+                  <p className="text-[11px] text-amber-800">
+                    <strong>مرجع التحويل:</strong> {order.paymentReceipt.referenceNote}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {paymentStatus !== "paid" && paymentStatus !== "waived" && (
+              <button
+                type="button"
+                onClick={() => handleSave(undefined, "paid")}
+                disabled={saving}
+                className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                تأكيد استلام الدفع وفتح التحميل فورا
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                const trackUrl = `${window.location.origin}/track?code=${encodeURIComponent(
+                  order.trackingCode
+                )}`;
+                const digits = order.contact.replace(/[^\d]/g, "");
+                const waPhone =
+                  digits.length === 10 && digits.startsWith("0")
+                    ? `213${digits.slice(1)}`
+                    : digits.length >= 11
+                    ? digits
+                    : "";
+                const msg =
+                  `السلام عليكم ${order.studentName}،\n` +
+                  `بخصوص طلبك (${order.moduleName} - ${order.assignmentTitle}) برمز التتبع: ${order.trackingCode}\n` +
+                  (status === "completed"
+                    ? paymentStatus === "paid" || paymentStatus === "waived"
+                      ? `✅ تم اعتماد الحل وتأكيد الدفع، يمكنك الآن تحميل ملف Word (.docx) والاطلاع على دليل الفهم السريع مباشرة من الرابط:\n${trackUrl}`
+                      : `✅ تم إعداد الحل بنجاح! يمكنك معاينة أول جزء من الحل ورفع وصل الدفع عبر BaridiMob لفتح ملف Word الكامل من الرابط:\n${trackUrl}`
+                    : `طلبك قيد المعالجة حاليا، يمكنك متابعته عبر الرابط:\n${trackUrl}`);
+                const waUrl = waPhone
+                  ? `https://wa.me/${waPhone}?text=${encodeURIComponent(msg)}`
+                  : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+                window.open(waUrl, "_blank", "noopener,noreferrer");
+              }}
+              className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold text-xs"
+            >
+              <MessageCircle className="w-4 h-4" />
+              إرسال رابط التتبع للطالب عبر WhatsApp
+            </button>
+          </div>
 
           {/* Status & Admin Note */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">

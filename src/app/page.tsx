@@ -1,22 +1,77 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { upload } from "@vercel/blob/client";
 import {
+  Award,
+  BookOpenCheck,
+  Check,
   CheckCircle2,
   Copy,
   FileSpreadsheet,
   FileText,
   FileUp,
   Send,
+  ShieldCheck,
   Sparkles,
   Trash2,
   ArrowLeft,
 } from "lucide-react";
-import type { UploadedFileMeta } from "@/types/order";
+import type { PackageId, PublicAppConfig, UploadedFileMeta } from "@/types/order";
+
+const FALLBACK_CONFIG: PublicAppConfig = {
+  currency: "دج",
+  cohortMaxSlots: 8,
+  previewLockEnabled: true,
+  payment: { baridimobRip: "", ccpAccount: "", accountName: "" },
+  supportWhatsapp: "",
+  packages: [
+    {
+      id: "standard",
+      name: "الباقة القياسية (نشاط فردي)",
+      priceDzd: 600,
+      subtitle: "مثالية للأنشطة النظرية أو التطبيقية المباشرة",
+      features: [
+        "حل منهجي ملتزم بمطبوعات ومحاضرات الأستاذ",
+        "ملف Word عربي RTL أصلي بمعادلات وجداول جاهزة لـ Moodle",
+        "أسلوب صياغة متفرد وقالب تنسيق خاص بطلبك",
+        "بطاقة «دليل الفهم السريع» للتحضير للمناقشة",
+      ],
+    },
+    {
+      id: "premium",
+      name: "باقة الامتياز (كمّي / ماستر)",
+      badge: "الأكثر طلبا",
+      highlighted: true,
+      priceDzd: 1200,
+      subtitle: "للأنشطة الكمية والإحصائية ودراسات الحالة المعمّقة",
+      features: [
+        "تدقيق حسابي ومنهجي ثنائي المرحلة (توليد + مراجعة أستاذ مدقّق)",
+        "جداول حسابات وسيطة كاملة وتحليل تسييري/اقتصادي معمّق",
+        "أنسنة أكاديمية متقدمة وفحص تفرد الدفعة (تشابه < 20%)",
+        "دليل الفهم والمناقشة الشفوية + تعديل مجاني خلال 48 ساعة",
+      ],
+    },
+    {
+      id: "semester",
+      name: "باقة السداسي (4 أنشطة)",
+      badge: "توفير 35%",
+      priceDzd: 2900,
+      subtitle: "مرافقة كاملة لأربعة أنشطة خلال السداسي بأولوية معالجة",
+      features: [
+        "تغطي 4 أنشطة جامعية بمستوى «باقة الامتياز» الكامل",
+        "أولوية قصوى في الإعداد والمراجعة والتسليم",
+        "تنويع القوالب وأساليب الكتابة لكل نشاط",
+        "حجز مقعد مضمون ضمن حصة الدفعة المحدودة",
+      ],
+    },
+  ],
+};
 
 export default function StudentOrderPage() {
+  const [appConfig, setAppConfig] = useState<PublicAppConfig>(FALLBACK_CONFIG);
+  const [selectedPackageId, setSelectedPackageId] = useState<PackageId>("premium");
   const [studentName, setStudentName] = useState("");
   const [contact, setContact] = useState("");
   const [university, setUniversity] = useState("جامعة التكوين المتواصل (UFC)");
@@ -36,8 +91,24 @@ export default function StudentOrderPage() {
   const [createdOrder, setCreatedOrder] = useState<{
     id: string;
     trackingCode: string;
+    priceDzd?: number;
   } | null>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/config", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: PublicAppConfig | null) => {
+        if (d && Array.isArray(d.packages) && d.packages.length > 0) {
+          setAppConfig(d);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const selectedPkg =
+    appConfig.packages.find((p) => p.id === selectedPackageId) ??
+    appConfig.packages[0];
 
   const handleFileAdd = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -123,6 +194,7 @@ export default function StudentOrderPage() {
             notes,
             includeCoverPage,
             strictReferencesOnly,
+            packageId: selectedPackageId,
             uploadedFiles,
           }),
         });
@@ -139,13 +211,14 @@ export default function StudentOrderPage() {
         fd.append("notes", notes);
         fd.append("includeCoverPage", String(includeCoverPage));
         fd.append("strictReferencesOnly", String(strictReferencesOnly));
+        fd.append("packageId", selectedPackageId);
         exerciseFiles.forEach((f) => fd.append("exerciseFiles", f));
         referenceFiles.forEach((f) => fd.append("referenceFiles", f));
         res = await fetch("/api/orders", { method: "POST", body: fd });
       }
 
       const rawText = await res.text();
-      let data: { id?: string; trackingCode?: string; error?: string } = {};
+      let data: { id?: string; trackingCode?: string; priceDzd?: number; error?: string } = {};
       try {
         data = JSON.parse(rawText);
       } catch {
@@ -160,7 +233,11 @@ export default function StudentOrderPage() {
       if (!res.ok || !data.id || !data.trackingCode) {
         throw new Error(data.error || "تعذر إرسال الطلب.");
       }
-      setCreatedOrder({ id: data.id, trackingCode: data.trackingCode });
+      setCreatedOrder({
+        id: data.id,
+        trackingCode: data.trackingCode,
+        priceDzd: data.priceDzd ?? selectedPkg?.priceDzd,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
     } finally {
@@ -195,19 +272,144 @@ export default function StudentOrderPage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/15 text-xs sm:text-sm">
           <div className="bg-white/10 rounded-xl p-3">
-            <span className="font-bold block mb-0.5">1. تقديم الطلب والمرفقات</span>
-            <span className="text-slate-200">ارفع ملف التمرين ومراجع المقياس واحصل على رمز تتبع.</span>
+            <span className="font-bold block mb-0.5">1. اختر باقتك وأرسل المرفقات</span>
+            <span className="text-slate-200">ارفع التمرين ومطبوعات المقياس واحصل فورا على رمز تتبع.</span>
           </div>
           <div className="bg-white/10 rounded-xl p-3">
-            <span className="font-bold block mb-0.5">2. الإعداد والمراجعة الدقيقة</span>
-            <span className="text-slate-200">توليد الحل وفق مراجعك ثم مراجعة يدوية للحسابات والصياغة.</span>
+            <span className="font-bold block mb-0.5">2. إعداد وتدقيق ثنائي المرحلة</span>
+            <span className="text-slate-200">حل ملتزم بمراجع أستاذك + معاينة مجانية لأول جزء قبل الدفع.</span>
           </div>
           <div className="bg-white/10 rounded-xl p-3">
-            <span className="font-bold block mb-0.5">3. تحميل ملف Word RTL</span>
-            <span className="text-slate-200">ملف .docx جاهز للرفع مباشرة على أرضية الجامعة Moodle.</span>
+            <span className="font-bold block mb-0.5">3. تحميل Word RTL + دليل الفهم</span>
+            <span className="text-slate-200">ملف .docx جاهز لـ Moodle + ملخص وأسئلة مناقشة متوقعة.</span>
           </div>
         </div>
       </section>
+
+      {/* Why Us vs Generic Free AI */}
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
+          <div className="w-9 h-9 rounded-xl bg-navy-50 text-navy-700 flex items-center justify-center">
+            <Award className="w-5 h-5" />
+          </div>
+          <h2 className="font-extrabold text-sm text-navy-800">
+            يتفوق على مخرجات ChatGPT السطحية
+          </h2>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            بدل إجابات عامة منسوخة، يلتزم الحل برموز وقوانين مطبوعاتك ويمر بتدقيق حسابي ومنهجي وإخراج معادلات Word أصلية (Cambria Math) بدون انقلاب أرقام أو جداول مكسورة.
+          </p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <h2 className="font-extrabold text-sm text-navy-800">
+            تفرد مضمون لحصة محدودة ({appConfig.cohortMaxSlots} طلبة/دفعة)
+          </h2>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            لكل طالب أسلوب صياغة أكاديمي طبيعي وقالب Word مختلف وفحص تلقائي لمنع تشابه النصوص بين طلبة نفس الدفعة، مع إمكانية المعاينة الجزئية قبل إتمام الدفع.
+          </p>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
+          <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center">
+            <BookOpenCheck className="w-5 h-5" />
+          </div>
+          <h2 className="font-extrabold text-sm text-navy-800">
+            دليل فهم ومناقشة حصري للطالب
+          </h2>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            تحصل مع كل حل معتمد على بطاقة مراجعة سريعة تشرح منطق الحل وأهم القوانين وأسئلة الأستاذ الشفوية المتوقعة، لتفهم عملك بثقة قبل رفعه ومناقشته.
+          </p>
+        </div>
+      </section>
+
+      {/* Live Env-Configurable Pricing Packages */}
+      {!createdOrder && (
+        <section className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+            <div>
+              <h2 className="text-xl font-extrabold text-navy-800">
+                اختر الباقة المناسبة لنشاطك
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                الدفع سهل عبر BaridiMob / CCP بعد التأكد من جودة المعاينة الجزئية لطلبك.
+              </p>
+            </div>
+            <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 self-start">
+              حصة الدفعة: بحد أقصى {appConfig.cohortMaxSlots} طلبات لنفس النشاط
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {appConfig.packages.map((pkg) => {
+              const isSelected = selectedPackageId === pkg.id;
+              return (
+                <button
+                  key={pkg.id}
+                  type="button"
+                  onClick={() => setSelectedPackageId(pkg.id)}
+                  className={`text-right rounded-2xl p-5 border-2 transition-all flex flex-col justify-between gap-4 ${
+                    isSelected
+                      ? "bg-navy-50/60 border-navy-700 shadow-md"
+                      : pkg.highlighted
+                      ? "bg-white border-navy-200 hover:border-navy-500 shadow-sm"
+                      : "bg-white border-slate-200 hover:border-slate-400"
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-extrabold text-sm text-navy-900">
+                          {pkg.name}
+                        </h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          {pkg.subtitle}
+                        </p>
+                      </div>
+                      {pkg.badge && (
+                        <span className="shrink-0 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-600 text-white">
+                          {pkg.badge}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-baseline gap-1.5 pt-1">
+                      <span className="text-2xl font-black text-navy-800">
+                        {pkg.priceDzd.toLocaleString("fr-DZ")}
+                      </span>
+                      <span className="text-xs font-bold text-slate-500">
+                        {appConfig.currency}
+                      </span>
+                    </div>
+
+                    <ul className="space-y-1.5 pt-2 border-t border-slate-200/80">
+                      {pkg.features.map((feat, idx) => (
+                        <li
+                          key={idx}
+                          className="flex items-start gap-1.5 text-xs text-slate-700 leading-relaxed"
+                        >
+                          <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                          <span>{feat}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div
+                    className={`w-full text-center py-2 rounded-xl text-xs font-bold ${
+                      isSelected
+                        ? "bg-navy-700 text-white"
+                        : "bg-slate-100 text-slate-700"
+                    }`}
+                  >
+                    {isSelected ? "الباقة المختارة حاليا ✓" : "اختيار هذه الباقة"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {createdOrder ? (
         <section className="bg-white border border-emerald-200 rounded-2xl p-6 sm:p-8 shadow-sm text-center space-y-5 max-w-2xl mx-auto">
@@ -219,8 +421,13 @@ export default function StudentOrderPage() {
               تم استلام طلبك بنجاح
             </h2>
             <p className="text-sm text-slate-600">
-              احتفظ برمز التتبع أدناه لمتابعة حالة إعداد ومراجعة الحل وتحميل ملف Word فور جاهزيته.
+              احتفظ برمز التتبع أدناه لمتابعة حالة الإعداد، ومعاينة الجزء الأول من الحل، ورفع وصل الدفع (BaridiMob / CCP) لتحميل ملف Word الكامل.
             </p>
+            {typeof createdOrder.priceDzd === "number" && (
+              <p className="text-xs font-bold text-navy-700 pt-1">
+                الباقة المختارة: {selectedPkg?.name} — المبلغ: {createdOrder.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+              </p>
+            )}
           </div>
 
           <div className="bg-navy-50 border border-navy-200 rounded-xl p-4 inline-flex items-center gap-4">
@@ -508,11 +715,18 @@ export default function StudentOrderPage() {
             </label>
           </div>
 
-          <div className="flex justify-end">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+            <div className="text-xs text-slate-600">
+              الباقة المختارة:{" "}
+              <strong className="text-navy-800">{selectedPkg?.name}</strong>{" "}
+              <span className="inline-block mr-1 px-2 py-0.5 rounded-full bg-navy-50 text-navy-800 font-extrabold">
+                {selectedPkg?.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+              </span>
+            </div>
             <button
               type="submit"
               disabled={submitting}
-              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60 shadow-sm transition-colors"
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-navy-700 text-white font-bold text-sm hover:bg-navy-600 disabled:opacity-60 shadow-sm transition-colors"
             >
               <Send className="w-4 h-4" />
               {submitting ? (uploadStatus || "جاري إرسال الطلب...") : "إرسال الطلب والحصول على رمز التتبع"}

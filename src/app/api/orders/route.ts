@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createOrder, listOrders, saveUploadedFile } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
-import { UploadedFileMeta } from "@/types/order";
+import { getPublicAppConfig, resolvePackagePrice } from "@/lib/pricing-config";
+import { sendTelegramAlert } from "@/lib/notify";
+import { PackageId, UploadedFileMeta } from "@/types/order";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,7 @@ interface JsonOrderPayload {
   notes?: string;
   includeCoverPage?: boolean;
   strictReferencesOnly?: boolean;
+  packageId?: PackageId;
   uploadedFiles?: UploadedFileMeta[];
 }
 
@@ -41,6 +44,7 @@ export async function POST(req: Request) {
     let notes = "";
     let includeCoverPage = false;
     let strictReferencesOnly = true;
+    let requestedPackageId: PackageId | undefined;
     const savedFiles: UploadedFileMeta[] = [];
 
     if (contentType.includes("application/json")) {
@@ -55,6 +59,7 @@ export async function POST(req: Request) {
       notes = String(body.notes ?? "").trim();
       includeCoverPage = Boolean(body.includeCoverPage);
       strictReferencesOnly = body.strictReferencesOnly !== false;
+      requestedPackageId = body.packageId;
       if (Array.isArray(body.uploadedFiles)) {
         for (const f of body.uploadedFiles) {
           if (f && f.blobUrl && f.originalName) {
@@ -83,6 +88,10 @@ export async function POST(req: Request) {
       notes = String(formData.get("notes") ?? "").trim();
       includeCoverPage = String(formData.get("includeCoverPage") ?? "false") === "true";
       strictReferencesOnly = String(formData.get("strictReferencesOnly") ?? "true") !== "false";
+      const rawPkg = String(formData.get("packageId") ?? "").trim();
+      if (rawPkg === "standard" || rawPkg === "premium" || rawPkg === "semester") {
+        requestedPackageId = rawPkg;
+      }
 
       const exerciseFiles = formData
         .getAll("exerciseFiles")
@@ -113,6 +122,9 @@ export async function POST(req: Request) {
       );
     }
 
+    const pkg = resolvePackagePrice(requestedPackageId);
+    const cfg = getPublicAppConfig();
+
     const order = await createOrder({
       studentName,
       contact,
@@ -124,14 +136,33 @@ export async function POST(req: Request) {
       notes,
       includeCoverPage,
       strictReferencesOnly,
+      packageId: pkg.packageId,
+      priceDzd: pkg.priceDzd,
+      paymentStatus: "unpaid",
+      paymentReceipt: null,
+      paidAt: null,
       files: savedFiles,
     });
+
+    const origin = new URL(req.url).origin;
+    void sendTelegramAlert(
+      `📥 طلب جديد في المنصة\n` +
+        `الرمز: ${order.trackingCode}\n` +
+        `الطالب: ${order.studentName}${order.contact ? ` (${order.contact})` : ""}\n` +
+        `المقياس: ${order.moduleName} — ${order.assignmentTitle}\n` +
+        `الباقة: ${pkg.packageName} (${pkg.priceDzd} ${cfg.currency})\n` +
+        `المرفقات: ${savedFiles.length} ملف\n` +
+        `الإدارة: ${origin}/admin/orders/${order.id}`
+    );
 
     return NextResponse.json(
       {
         id: order.id,
         trackingCode: order.trackingCode,
         status: order.status,
+        packageId: order.packageId,
+        priceDzd: order.priceDzd,
+        paymentStatus: order.paymentStatus,
       },
       { status: 201 }
     );

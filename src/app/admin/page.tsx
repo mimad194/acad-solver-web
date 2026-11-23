@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  Banknote,
   CheckCircle2,
   Clock,
   FileEdit,
@@ -13,12 +14,19 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { OrderStatus, StudentOrder } from "@/types/order";
+import { OrderStatus, PaymentStatus, StudentOrder } from "@/types/order";
 
 const STATUS_META: Record<OrderStatus, { label: string; cls: string }> = {
   pending: { label: "قيد الانتظار", cls: "bg-amber-100 text-amber-800" },
   in_review: { label: "قيد المراجعة", cls: "bg-blue-100 text-blue-800" },
   completed: { label: "مكتمل ومسلم", cls: "bg-emerald-100 text-emerald-800" },
+};
+
+const PAY_META: Record<PaymentStatus, { label: string; cls: string }> = {
+  unpaid: { label: "غير مدفوع", cls: "bg-slate-100 text-slate-600" },
+  receipt_submitted: { label: "وصل للمراجعة", cls: "bg-amber-100 text-amber-800" },
+  paid: { label: "مدفوع ✓", cls: "bg-emerald-100 text-emerald-800" },
+  waived: { label: "مجاني ✓", cls: "bg-emerald-50 text-emerald-700" },
 };
 
 export default function AdminDashboardPage() {
@@ -150,10 +158,18 @@ export default function AdminDashboardPage() {
     pending: orders.filter((o) => o.status === "pending").length,
     in_review: orders.filter((o) => o.status === "in_review").length,
     completed: orders.filter((o) => o.status === "completed").length,
+    receiptsPending: orders.filter((o) => o.paymentStatus === "receipt_submitted").length,
+    revenueDzd: orders
+      .filter((o) => o.paymentStatus === "paid")
+      .reduce((sum, o) => sum + (o.priceDzd ?? 0), 0),
   };
 
   const filtered = orders.filter((o) => {
-    if (filterStatus !== "all" && o.status !== filterStatus) return false;
+    if (filterStatus === "receipt_submitted") {
+      if (o.paymentStatus !== "receipt_submitted") return false;
+    } else if (filterStatus !== "all" && o.status !== filterStatus) {
+      return false;
+    }
     if (!query.trim()) return true;
     const q = query.trim().toLowerCase();
     return (
@@ -172,7 +188,7 @@ export default function AdminDashboardPage() {
             لوحة تحكم إدارة الطلبات
           </h1>
           <p className="text-sm text-slate-500">
-            راجع طلبات الطلبة الواردة، ولّد الحل وفق المراجع المرفقة، عدّله واعتمد تسليمه.
+            راجع طلبات الطلبة الواردة، أكّد وصولات BaridiMob، ولّد الحل وفق المراجع المرفقة واعتمد تسليمه.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -196,12 +212,18 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {[
-          { label: "إجمالي الطلبات", val: stats.total, icon: Inbox, color: "text-navy-700 bg-navy-50" },
-          { label: "قيد الانتظار", val: stats.pending, icon: Clock, color: "text-amber-700 bg-amber-50" },
-          { label: "قيد المراجعة", val: stats.in_review, icon: FileEdit, color: "text-blue-700 bg-blue-50" },
-          { label: "مكتملة ومسلمة", val: stats.completed, icon: CheckCircle2, color: "text-emerald-700 bg-emerald-50" },
+          { label: "إجمالي الطلبات", val: String(stats.total), icon: Inbox, color: "text-navy-700 bg-navy-50" },
+          { label: "قيد الانتظار", val: String(stats.pending), icon: Clock, color: "text-amber-700 bg-amber-50" },
+          { label: "قيد المراجعة", val: String(stats.in_review), icon: FileEdit, color: "text-blue-700 bg-blue-50" },
+          { label: "مكتملة ومسلمة", val: String(stats.completed), icon: CheckCircle2, color: "text-emerald-700 bg-emerald-50" },
+          {
+            label: "المداخيل المؤكدة",
+            val: `${stats.revenueDzd.toLocaleString("fr-DZ")} دج`,
+            icon: Banknote,
+            color: "text-emerald-800 bg-emerald-100",
+          },
         ].map((card) => {
           const Icon = card.icon;
           return (
@@ -211,9 +233,9 @@ export default function AdminDashboardPage() {
             >
               <div>
                 <p className="text-xs text-slate-500 font-medium">{card.label}</p>
-                <p className="text-2xl font-extrabold text-navy-900 mt-1">{card.val}</p>
+                <p className="text-xl sm:text-2xl font-extrabold text-navy-900 mt-1">{card.val}</p>
               </div>
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${card.color}`}>
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${card.color}`}>
                 <Icon className="w-5 h-5" />
               </div>
             </div>
@@ -239,6 +261,10 @@ export default function AdminDashboardPage() {
             { k: "pending", label: "قيد الانتظار" },
             { k: "in_review", label: "قيد المراجعة" },
             { k: "completed", label: "مكتملة" },
+            {
+              k: "receipt_submitted",
+              label: `وصولات للمراجعة (${stats.receiptsPending})`,
+            },
           ].map((tab) => (
             <button
               key={tab.k}
@@ -265,7 +291,7 @@ export default function AdminDashboardPage() {
                 <th className="px-4 py-3 font-bold">الرمز</th>
                 <th className="px-4 py-3 font-bold">الطالب</th>
                 <th className="px-4 py-3 font-bold">المقياس والنشاط</th>
-                <th className="px-4 py-3 font-bold text-center">المرفقات</th>
+                <th className="px-4 py-3 font-bold text-center">الدفع والسعر</th>
                 <th className="px-4 py-3 font-bold text-center">الحالة</th>
                 <th className="px-4 py-3 font-bold text-center">التاريخ</th>
                 <th className="px-4 py-3 font-bold text-center">إجراءات</th>
@@ -281,6 +307,7 @@ export default function AdminDashboardPage() {
               ) : (
                 filtered.map((o) => {
                   const st = STATUS_META[o.status];
+                  const pm = o.paymentStatus ? PAY_META[o.paymentStatus] : null;
                   return (
                     <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
                       <td className="px-4 py-3.5 font-mono text-xs font-bold text-navy-700 whitespace-nowrap">
@@ -292,10 +319,23 @@ export default function AdminDashboardPage() {
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="font-bold text-navy-800">{o.assignmentTitle}</div>
-                        <div className="text-xs text-slate-500">{o.moduleName}</div>
+                        <div className="text-xs text-slate-500">
+                          {o.moduleName} • {o.files.length} ملف
+                        </div>
                       </td>
-                      <td className="px-4 py-3.5 text-center text-xs text-slate-600">
-                        {o.files.length} ملف
+                      <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                        {typeof o.priceDzd === "number" && (
+                          <div className="text-xs font-extrabold text-navy-800 mb-0.5">
+                            {o.priceDzd.toLocaleString("fr-DZ")} دج
+                          </div>
+                        )}
+                        {pm ? (
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${pm.cls}`}>
+                            {pm.label}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5 text-center">
                         <span className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${st.cls}`}>
