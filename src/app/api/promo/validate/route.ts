@@ -19,7 +19,10 @@ export async function POST(req: Request) {
     );
     return NextResponse.json({
       ...result,
-      originalPriceDzd: pkg.priceDzd,
+      originalPriceDzd:
+        result.valid && result.kind === "credit_pass"
+          ? result.discountAmountDzd
+          : pkg.priceDzd,
     });
   } catch {
     return NextResponse.json(

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "node --import ./tests/ts-loader.mjs --test tests/commercial-algorithms.test.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.9.0",

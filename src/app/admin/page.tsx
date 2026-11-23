@@ -22,11 +22,19 @@ import {
 } from "lucide-react";
 import {
   OrderStatus,
+  PackageId,
   PaymentStatus,
   PromoCodeEntry,
   PublicAppConfig,
   StudentOrder,
 } from "@/types/order";
+import { copyToClipboard } from "@/lib/clipboard";
+
+const PROMO_SCOPE_LABELS: Record<PackageId, string> = {
+  standard: "نشاط واحد فقط",
+  premium: "باقة 3 أنشطة",
+  semester: "باقة السداسي",
+};
 
 const STATUS_META: Record<OrderStatus, { label: string; cls: string }> = {
   pending: { label: "قيد الانتظار", cls: "bg-amber-100 text-amber-800" },
@@ -62,6 +70,7 @@ export default function AdminDashboardPage() {
   const [newPromoPct, setNewPromoPct] = useState("25");
   const [newPromoMaxUses, setNewPromoMaxUses] = useState("0");
   const [newPromoBatchCount, setNewPromoBatchCount] = useState("1");
+  const [newPromoScope, setNewPromoScope] = useState<"all" | PackageId>("all");
   const [newPromoNote, setNewPromoNote] = useState("");
   const [lastBatchCodes, setLastBatchCodes] = useState<string[]>([]);
   const [promoMsg, setPromoMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -134,6 +143,7 @@ export default function AdminDashboardPage() {
           discountPercent: Number(newPromoPct),
           maxUses: batch > 1 ? 1 : Number(newPromoMaxUses) || 0,
           batchCount: batch,
+          allowedPackageIds: newPromoScope === "all" ? undefined : [newPromoScope],
           note: newPromoNote,
           active: true,
         }),
@@ -164,20 +174,44 @@ export default function AdminDashboardPage() {
   };
 
   const handleTogglePromo = async (code: string, active: boolean) => {
-    await fetch("/api/admin/promos", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, active: !active }),
-    });
-    void loadPromos();
+    setPromoMsg(null);
+    try {
+      const res = await fetch("/api/admin/promos", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, active: !active }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "تعذر تحديث حالة الكود.");
+      }
+      void loadPromos();
+    } catch (err) {
+      setPromoMsg({
+        type: "err",
+        text: err instanceof Error ? err.message : "تعذر تحديث حالة الكود.",
+      });
+    }
   };
 
   const handleDeletePromo = async (code: string) => {
     if (!confirm(`حذف كود البرومو ${code} نهائيا؟`)) return;
-    await fetch(`/api/admin/promos?code=${encodeURIComponent(code)}`, {
-      method: "DELETE",
-    });
-    void loadPromos();
+    setPromoMsg(null);
+    try {
+      const res = await fetch(`/api/admin/promos?code=${encodeURIComponent(code)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "تعذر حذف الكود.");
+      }
+      void loadPromos();
+    } catch (err) {
+      setPromoMsg({
+        type: "err",
+        text: err instanceof Error ? err.message : "تعذر حذف الكود.",
+      });
+    }
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -845,7 +879,7 @@ export default function AdminDashboardPage() {
               {lastBatchCodes.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => navigator.clipboard.writeText(lastBatchCodes.join("\n"))}
+                  onClick={() => void copyToClipboard(lastBatchCodes.join("\n"))}
                   className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold shrink-0"
                 >
                   نسخ كل الأكواد
@@ -856,7 +890,7 @@ export default function AdminDashboardPage() {
 
           <form
             onSubmit={handleCreatePromo}
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200"
           >
             <div>
               <label className="block text-[11px] font-bold text-slate-600 mb-1">
@@ -885,6 +919,21 @@ export default function AdminDashboardPage() {
                 onChange={(e) => setNewPromoPct(e.target.value)}
                 className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
               />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                الباقة المسموحة
+              </label>
+              <select
+                value={newPromoScope}
+                onChange={(e) => setNewPromoScope(e.target.value as "all" | PackageId)}
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-bold"
+              >
+                <option value="all">كل الباقات</option>
+                <option value="standard">نشاط واحد فقط</option>
+                <option value="premium">باقة 3 أنشطة فقط</option>
+                <option value="semester">باقة السداسي فقط</option>
+              </select>
             </div>
             <div>
               <label className="block text-[11px] font-bold text-slate-600 mb-1">
@@ -980,6 +1029,11 @@ export default function AdminDashboardPage() {
                         <span className="font-bold ml-1">
                           {p.source === "referral_reward" ? "🎁 مكافأة إحالة:" : "إداري:"}
                         </span>
+                        {p.allowedPackageIds && p.allowedPackageIds.length > 0 && (
+                          <span className="inline-block ml-1.5 px-1.5 py-0.5 rounded bg-navy-50 text-navy-700 font-bold text-[10px]">
+                            {p.allowedPackageIds.map((id) => PROMO_SCOPE_LABELS[id] ?? id).join(" + ")}
+                          </span>
+                        )}
                         {p.note || "—"}
                       </td>
                       <td className="px-3 py-2.5 text-center">

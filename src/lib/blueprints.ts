@@ -7,7 +7,11 @@ import type {
   SolutionDocument,
   StudentOrder,
 } from "@/types/order";
-import { getFirestoreDb } from "./firebase-admin";
+import {
+  getFirestoreDb,
+  getLocalDataDir,
+  sanitizeForFirestore,
+} from "./firebase-admin";
 import { normalizeCourseKey } from "./ufc-catalog";
 
 const BLUEPRINT_COLLECTION = "verified_blueprints";
@@ -26,11 +30,7 @@ export interface VerifiedBlueprintEntry {
 }
 
 function getLocalBlueprintsPath(): string {
-  const dir =
-    process.env.VERCEL || process.env.NETLIFY
-      ? path.join("/tmp", "acad-solver-data")
-      : path.join(process.cwd(), ".data");
-  return path.join(dir, "verified-blueprints.json");
+  return path.join(getLocalDataDir(), "verified-blueprints.json");
 }
 
 async function readLocalBlueprints(): Promise<VerifiedBlueprintEntry[]> {
@@ -114,7 +114,7 @@ export async function saveVerifiedBlueprintFromOrder(
 
   const db = getFirestoreDb();
   if (db) {
-    await db.collection(BLUEPRINT_COLLECTION).doc(id).set(entry);
+    await db.collection(BLUEPRINT_COLLECTION).doc(id).set(sanitizeForFirestore(entry));
     return entry;
   }
   const all = await readLocalBlueprints();

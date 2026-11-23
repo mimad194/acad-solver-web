@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { NextResponse } from "next/server";
 import { createOrder, listOrders, saveUploadedFile } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
@@ -9,12 +10,17 @@ import { sendTelegramAlert } from "@/lib/notify";
 import { findCourseLibraryEntry } from "@/lib/course-library";
 import { findCatalogSpecialty, formatSpecialtyDisplay } from "@/lib/ufc-catalog";
 import {
-  generateReferralCode,
-  incrementPromoUsage,
+  consumePromoCodeAtomic,
+  generateUniqueReferralCode,
   normalizeCode,
+  rollbackPromoUsage,
   validatePromoOrReferralCode,
 } from "@/lib/promo-referral";
-import { consumeOneCredit, issueCreditPassForOrder } from "@/lib/credit-passes";
+import {
+  consumeOneCredit,
+  issueCreditPassForOrder,
+  refundOneCredit,
+} from "@/lib/credit-passes";
 import {
   AcademicCycle,
   AcademicYearCode,
@@ -196,39 +202,85 @@ export async function POST(req: Request) {
     const cfg = await getPublicAppConfigAsync();
 
     // Server-side promo / referral / credit pass resolution (never trust client-side price)
-    const originalPriceDzd = pkg.priceDzd;
+    const orderId = crypto.randomUUID();
+    let originalPriceDzd = pkg.priceDzd;
     let finalPriceDzd = originalPriceDzd;
     let discountPercent = 0;
     let discountAmountDzd = 0;
     let promoCodeUsed: string | undefined;
     let creditPassUsed: string | undefined;
+    let remainingPassCredits: number | undefined;
     let resolvedReferredBy: string | undefined;
     let effectivePackageId = pkg.packageId;
 
-    const codeToCheck = promoCodeInput || referredByInput;
-    if (codeToCheck) {
+    if (promoCodeInput) {
       const check = await validatePromoOrReferralCode(
-        codeToCheck,
+        promoCodeInput,
         originalPriceDzd,
         pkg.packageId
       );
-      if (check.valid) {
+      if (!check.valid) {
+        return NextResponse.json({ error: check.message }, { status: 400 });
+      }
+      if (check.kind === "credit_pass") {
+        const consumedPass = await consumeOneCredit(check.code, orderId);
+        if (!consumedPass) {
+          return NextResponse.json(
+            {
+              error:
+                "تعذر استهلاك الرصيد: ربما تم استنفاد آخر نشاط في رمزك أو انتهت صلاحيته.",
+            },
+            { status: 409 }
+          );
+        }
+        const standardPkg = await resolvePackagePriceAsync("standard");
+        creditPassUsed = consumedPass.passCode;
+        effectivePackageId = "standard"; // Consuming 1 activity credit
+        originalPriceDzd = standardPkg.priceDzd;
+        discountPercent = 100;
+        discountAmountDzd = standardPkg.priceDzd;
+        finalPriceDzd = 0;
+        remainingPassCredits = Math.max(
+          0,
+          consumedPass.totalCredits - consumedPass.usedCredits
+        );
+      } else if (check.kind === "promo") {
+        const consumed = await consumePromoCodeAtomic(check.code, pkg.packageId);
+        if (!consumed.ok) {
+          return NextResponse.json({ error: consumed.message }, { status: 409 });
+        }
+        promoCodeUsed = consumed.promo.code;
+        discountPercent = Math.min(
+          100,
+          Math.max(0, Math.round(consumed.promo.discountPercent))
+        );
+        discountAmountDzd =
+          discountPercent === 100
+            ? originalPriceDzd
+            : Math.round((originalPriceDzd * discountPercent) / 100);
+        finalPriceDzd = Math.max(0, originalPriceDzd - discountAmountDzd);
+      } else if (check.kind === "referral") {
+        resolvedReferredBy = check.code;
         discountPercent = check.discountPercent;
         discountAmountDzd = check.discountAmountDzd;
         finalPriceDzd = check.finalPriceDzd;
-        if (check.kind === "credit_pass") {
-          creditPassUsed = check.code;
-          effectivePackageId = "standard"; // Consuming 1 activity credit
-          finalPriceDzd = 0;
-        } else if (check.kind === "promo") {
-          promoCodeUsed = check.code;
-          await incrementPromoUsage(check.code);
-        } else if (check.kind === "referral") {
-          resolvedReferredBy = check.code;
-        }
+      }
+    } else if (referredByInput) {
+      // Passive ?ref= link attribution: apply if valid, don't block order if link is stale
+      const refCheck = await validatePromoOrReferralCode(
+        referredByInput,
+        originalPriceDzd,
+        pkg.packageId
+      );
+      if (refCheck.valid && refCheck.kind === "referral") {
+        resolvedReferredBy = refCheck.code;
+        discountPercent = refCheck.discountPercent;
+        discountAmountDzd = refCheck.discountAmountDzd;
+        finalPriceDzd = refCheck.finalPriceDzd;
       }
     }
-    // If student also came via ?ref=... link AND typed a separate promo code, preserve referral attribution!
+
+    // If student came via ?ref=... link AND typed a separate promo code, preserve referral attribution
     if (!resolvedReferredBy && referredByInput) {
       const refCheck = await validatePromoOrReferralCode(
         referredByInput,
@@ -240,49 +292,60 @@ export async function POST(req: Request) {
       }
     }
 
-    const myReferralCode = generateReferralCode();
+    const myReferralCode = await generateUniqueReferralCode();
     const initialPaymentStatus = finalPriceDzd === 0 ? "waived" : "unpaid";
 
-    const order = await createOrder({
-      studentName,
-      contact,
-      university,
-      cycle,
-      year,
-      domain: catalogSpec?.domain,
-      specialtyId: specialtyId || undefined,
-      specialty: resolvedSpecialtyText,
-      moduleName,
-      assignmentTitle,
-      exerciseText,
-      notes,
-      includeCoverPage,
-      strictReferencesOnly,
-      usedLibraryRefCount: libraryRefCount,
-      packageId: effectivePackageId,
-      originalPriceDzd,
-      discountPercent,
-      discountAmountDzd,
-      promoCodeUsed,
-      creditPassUsed,
-      referralCode: myReferralCode,
-      referredByCode: resolvedReferredBy ? normalizeCode(resolvedReferredBy) : undefined,
-      rewardPromoCodes: [],
-      priceDzd: finalPriceDzd,
-      paymentStatus: initialPaymentStatus,
-      paymentReceipt: null,
-      paidAt: finalPriceDzd === 0 ? new Date().toISOString() : null,
-      files: savedFiles,
-    });
-
-    let remainingPassCredits: number | undefined;
-    let issuedPassCode: string | undefined;
-    if (creditPassUsed) {
-      const updatedPass = await consumeOneCredit(creditPassUsed, order.id);
-      if (updatedPass) {
-        remainingPassCredits = Math.max(0, updatedPass.totalCredits - updatedPass.usedCredits);
+    let order;
+    try {
+      order = await createOrder({
+        id: orderId,
+        studentName,
+        contact,
+        university,
+        cycle,
+        year,
+        domain: catalogSpec?.domain,
+        specialtyId: specialtyId || undefined,
+        specialty: resolvedSpecialtyText,
+        moduleName,
+        assignmentTitle,
+        exerciseText,
+        notes,
+        includeCoverPage,
+        strictReferencesOnly,
+        usedLibraryRefCount: libraryRefCount,
+        packageId: effectivePackageId,
+        originalPriceDzd,
+        discountPercent,
+        discountAmountDzd,
+        promoCodeUsed,
+        creditPassUsed,
+        referralCode: myReferralCode,
+        referredByCode: resolvedReferredBy ? normalizeCode(resolvedReferredBy) : undefined,
+        rewardPromoCodes: [],
+        priceDzd: finalPriceDzd,
+        paymentStatus: initialPaymentStatus,
+        paymentReceipt: null,
+        paidAt: finalPriceDzd === 0 ? new Date().toISOString() : null,
+        files: savedFiles,
+      });
+    } catch (createErr) {
+      // Rollback consumed promo usage or credit pass so nothing is leaked on failure
+      if (promoCodeUsed) {
+        await rollbackPromoUsage(promoCodeUsed).catch((e) =>
+          console.error("Failed to rollback promo usage:", e)
+        );
       }
-    } else if (initialPaymentStatus === "waived") {
+      if (creditPassUsed) {
+        await refundOneCredit(creditPassUsed, orderId).catch((e) =>
+          console.error("Failed to refund credit pass:", e)
+        );
+      }
+      throw createErr;
+    }
+
+    let issuedPassCode: string | undefined;
+    if (!creditPassUsed && initialPaymentStatus === "waived") {
       const pass = await issueCreditPassForOrder(order);
       if (pass) issuedPassCode = pass.passCode;
     }

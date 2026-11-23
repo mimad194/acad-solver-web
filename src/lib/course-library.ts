@@ -7,17 +7,17 @@ import type {
   CourseLibraryEntry,
   UploadedFileMeta,
 } from "@/types/order";
-import { getFirestoreDb } from "./firebase-admin";
+import {
+  getFirestoreDb,
+  getLocalDataDir,
+  sanitizeForFirestore,
+} from "./firebase-admin";
 import { findCatalogSpecialty, normalizeCourseKey } from "./ufc-catalog";
 
 const LIBRARY_COLLECTION = "course_library";
 
 function getLocalLibraryPath(): string {
-  const dir =
-    process.env.VERCEL || process.env.NETLIFY
-      ? path.join("/tmp", "acad-solver-data")
-      : path.join(process.cwd(), ".data");
-  return path.join(dir, "course-library.json");
+  return path.join(getLocalDataDir(), "course-library.json");
 }
 
 async function readLocalLibrary(): Promise<CourseLibraryEntry[]> {
@@ -149,7 +149,7 @@ export async function upsertCourseLibraryReferences(params: {
 
   const db = getFirestoreDb();
   if (db) {
-    await db.collection(LIBRARY_COLLECTION).doc(id).set(entry);
+    await db.collection(LIBRARY_COLLECTION).doc(id).set(sanitizeForFirestore(entry));
     return entry;
   }
 

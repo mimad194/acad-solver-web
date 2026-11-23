@@ -4,7 +4,11 @@ import crypto from "crypto";
 import { del, list, put } from "@vercel/blob";
 import { StudentOrder, UploadedFileMeta } from "@/types/order";
 import { buildDemoSeedOrder } from "./sample-seed";
-import { getFirestoreDb } from "./firebase-admin";
+import {
+  getFirestoreDb,
+  getLocalDataDir,
+  sanitizeForFirestore,
+} from "./firebase-admin";
 import { listCourseLibrary } from "./course-library";
 
 const ORDERS_COLLECTION = "orders";
@@ -28,10 +32,7 @@ function useVercelBlob(): boolean {
 // ---------- Local / Fallback Filesystem Helpers ----------
 
 function getDataDir(): string {
-  if (process.env.VERCEL || process.env.NETLIFY) {
-    return path.join("/tmp", "acad-solver-data");
-  }
-  return path.join(process.cwd(), ".data");
+  return getLocalDataDir();
 }
 
 function getOrdersFile(): string {
@@ -65,7 +66,7 @@ async function listOrdersFromFirestore(): Promise<StudentOrder[]> {
   const snap = await db.collection(ORDERS_COLLECTION).orderBy("createdAt", "desc").get();
   if (snap.empty) {
     const demo = buildDemoSeedOrder();
-    await db.collection(ORDERS_COLLECTION).doc(demo.id).set(demo);
+    await db.collection(ORDERS_COLLECTION).doc(demo.id).set(sanitizeForFirestore(demo));
     return [demo];
   }
   return snap.docs.map((d) => d.data() as StudentOrder);
@@ -152,7 +153,7 @@ export async function getOrderByTrackingCode(code: string): Promise<StudentOrder
       const anyDoc = await db.collection(ORDERS_COLLECTION).limit(1).get();
       if (anyDoc.empty) {
         const demo = buildDemoSeedOrder();
-        await db.collection(ORDERS_COLLECTION).doc(demo.id).set(demo);
+        await db.collection(ORDERS_COLLECTION).doc(demo.id).set(sanitizeForFirestore(demo));
         return demo;
       }
     }
@@ -251,13 +252,30 @@ export async function readUploadedFileBuffer(
   }
 }
 
+let localOrderLock: Promise<void> = Promise.resolve();
+
+async function withLocalOrderLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = localOrderLock;
+  let release!: () => void;
+  localOrderLock = new Promise<void>((res) => {
+    release = res;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 export async function createOrder(
   data: Omit<
     StudentOrder,
     "id" | "trackingCode" | "status" | "adminNote" | "solution" | "createdAt" | "updatedAt"
-  >
+  > & { id?: string }
 ): Promise<StudentOrder> {
   const now = new Date().toISOString();
+  const orderId = data.id || crypto.randomUUID();
   const db = getFirestoreDb();
 
   if (db) {
@@ -271,44 +289,46 @@ export async function createOrder(
       if (exists.empty) break;
       code = generateTrackingCode();
     }
-    const order: StudentOrder = {
+    const order = sanitizeForFirestore<StudentOrder>({
       ...data,
-      id: crypto.randomUUID(),
+      id: orderId,
       trackingCode: code,
       status: "pending",
       adminNote: "",
       solution: null,
       createdAt: now,
       updatedAt: now,
-    };
+    });
     await db.collection(ORDERS_COLLECTION).doc(order.id).set(order);
     return order;
   }
 
-  const orders = await listOrders();
-  let code = generateTrackingCode();
-  while (orders.some((o) => o.trackingCode === code)) {
-    code = generateTrackingCode();
-  }
-  const order: StudentOrder = {
-    ...data,
-    id: crypto.randomUUID(),
-    trackingCode: code,
-    status: "pending",
-    adminNote: "",
-    solution: null,
-    createdAt: now,
-    updatedAt: now,
-  };
+  return withLocalOrderLock(async () => {
+    const orders = await listOrders();
+    let code = generateTrackingCode();
+    while (orders.some((o) => o.trackingCode === code)) {
+      code = generateTrackingCode();
+    }
+    const order = sanitizeForFirestore<StudentOrder>({
+      ...data,
+      id: orderId,
+      trackingCode: code,
+      status: "pending",
+      adminNote: "",
+      solution: null,
+      createdAt: now,
+      updatedAt: now,
+    });
 
-  if (useVercelBlob()) {
-    await saveOrderToBlob(order);
+    if (useVercelBlob()) {
+      await saveOrderToBlob(order);
+      return order;
+    }
+
+    orders.unshift(order);
+    await writeLocalOrders(orders);
     return order;
-  }
-
-  orders.unshift(order);
-  await writeLocalOrders(orders);
-  return order;
+  });
 }
 
 export async function updateOrder(
@@ -320,26 +340,28 @@ export async function updateOrder(
     const ref = db.collection(ORDERS_COLLECTION).doc(id);
     const snap = await ref.get();
     if (!snap.exists) return null;
-    const updated = updater(snap.data() as StudentOrder);
+    const updated = sanitizeForFirestore(updater(snap.data() as StudentOrder));
     updated.updatedAt = new Date().toISOString();
     await ref.set(updated);
     return updated;
   }
 
-  const orders = await listOrders();
-  const idx = orders.findIndex((o) => o.id === id);
-  if (idx === -1) return null;
-  const updated = updater(orders[idx]);
-  updated.updatedAt = new Date().toISOString();
+  return withLocalOrderLock(async () => {
+    const orders = await listOrders();
+    const idx = orders.findIndex((o) => o.id === id);
+    if (idx === -1) return null;
+    const updated = sanitizeForFirestore(updater(orders[idx]));
+    updated.updatedAt = new Date().toISOString();
 
-  if (useVercelBlob()) {
-    await saveOrderToBlob(updated);
+    if (useVercelBlob()) {
+      await saveOrderToBlob(updated);
+      return updated;
+    }
+
+    orders[idx] = updated;
+    await writeLocalOrders(orders);
     return updated;
-  }
-
-  orders[idx] = updated;
-  await writeLocalOrders(orders);
-  return updated;
+  });
 }
 
 export async function deleteOrder(id: string): Promise<boolean> {

@@ -1,7 +1,50 @@
+import path from "path";
 import { cert, getApps, initializeApp, type ServiceAccount } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
 let lastFirebaseConfigError: string | null = null;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * Recursively strips `undefined` properties from plain objects and `undefined`
+ * elements from arrays so Firestore never rejects a document write even when
+ * `ignoreUndefinedProperties` is disabled.
+ */
+export function sanitizeForFirestore<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeForFirestore(item)) as unknown as T;
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v !== undefined) {
+        out[k] = sanitizeForFirestore(v);
+      }
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/**
+ * Resolves the local fallback data directory. Supports `ACAD_SOLVER_DATA_DIR`
+ * for completely isolated test runs without touching `.data/` or `/tmp`.
+ */
+export function getLocalDataDir(): string {
+  const override = process.env.ACAD_SOLVER_DATA_DIR?.trim();
+  if (override) return override;
+  if (process.env.VERCEL || process.env.NETLIFY) {
+    return path.join("/tmp", "acad-solver-data");
+  }
+  return path.join(process.cwd(), ".data");
+}
 
 function parseServiceAccountJson(raw: string): ServiceAccount | null {
   let text = raw.trim();
@@ -70,7 +113,7 @@ function loadServiceAccount(): ServiceAccount | null {
 }
 
 export function isFirebaseConfigured(): boolean {
-  return loadServiceAccount() !== null;
+  return Boolean(process.env.FIRESTORE_EMULATOR_HOST?.trim()) || loadServiceAccount() !== null;
 }
 
 export function getFirebaseDiagnostic(): {
@@ -78,20 +121,54 @@ export function getFirebaseDiagnostic(): {
   hasRawEnv: boolean;
   error: string | null;
 } {
-  const configured = loadServiceAccount() !== null;
+  const configured = isFirebaseConfigured();
   return {
     configured,
     hasRawEnv: Boolean(
-      process.env.FIREBASE_SERVICE_ACCOUNT_KEY || process.env.FIREBASE_PROJECT_ID
+      process.env.FIRESTORE_EMULATOR_HOST ||
+        process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+        process.env.FIREBASE_PROJECT_ID
     ),
     error: configured ? null : lastFirebaseConfigError,
   };
 }
 
-let cachedDb: Firestore | null = null;
+const globalForFirestore = globalThis as unknown as {
+  __acadSolverFirestoreDb?: Firestore | null;
+  __acadSolverFirestoreTestOverride?: Firestore | null | undefined;
+};
+
+/**
+ * Test-only hook to inject an isolated Firestore instance (e.g. strict in-memory
+ * Firestore harness) or pass `undefined` to restore normal resolution.
+ */
+export function __setFirestoreDbForTests(db: Firestore | null | undefined): void {
+  globalForFirestore.__acadSolverFirestoreTestOverride = db;
+}
 
 export function getFirestoreDb(): Firestore | null {
-  if (cachedDb) return cachedDb;
+  if (globalForFirestore.__acadSolverFirestoreTestOverride !== undefined) {
+    return globalForFirestore.__acadSolverFirestoreTestOverride;
+  }
+  if (globalForFirestore.__acadSolverFirestoreDb) {
+    return globalForFirestore.__acadSolverFirestoreDb;
+  }
+
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST?.trim();
+  if (emulatorHost) {
+    const projectId = process.env.FIREBASE_PROJECT_ID?.trim() || "demo-acad-solver";
+    const app =
+      getApps().length > 0 ? getApps()[0] : initializeApp({ projectId });
+    const db = getFirestore(app);
+    try {
+      db.settings({ ignoreUndefinedProperties: true });
+    } catch {
+      // Already configured on a reused Firestore instance
+    }
+    globalForFirestore.__acadSolverFirestoreDb = db;
+    return db;
+  }
+
   const serviceAccount = loadServiceAccount();
   if (!serviceAccount) return null;
 
@@ -100,6 +177,12 @@ export function getFirestoreDb(): Firestore | null {
       ? getApps()[0]
       : initializeApp({ credential: cert(serviceAccount) });
 
-  cachedDb = getFirestore(app);
-  return cachedDb;
+  const db = getFirestore(app);
+  try {
+    db.settings({ ignoreUndefinedProperties: true });
+  } catch {
+    // Already configured (e.g. across Next.js hot reloads)
+  }
+  globalForFirestore.__acadSolverFirestoreDb = db;
+  return db;
 }

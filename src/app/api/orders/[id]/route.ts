@@ -83,12 +83,18 @@ export async function PATCH(
 
   let mintedReferralReward: string | null = null;
   if (before?.paymentStatus !== "paid" && updated.paymentStatus === "paid") {
-    mintedReferralReward = await processReferralQualification(updated).catch(() => null);
+    mintedReferralReward = await processReferralQualification(updated).catch((err) => {
+      console.error("processReferralQualification failed:", err);
+      return null;
+    });
   }
 
   let issuedPassCode: string | null = updated.issuedPassCode ?? null;
   if (updated.paymentStatus === "paid" || updated.paymentStatus === "waived") {
-    const pass = await issueCreditPassForOrder(updated).catch(() => null);
+    const pass = await issueCreditPassForOrder(updated).catch((err) => {
+      console.error("issueCreditPassForOrder failed:", err);
+      return null;
+    });
     if (pass) {
       issuedPassCode = pass.passCode;
     }

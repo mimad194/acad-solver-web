@@ -144,6 +144,7 @@ export default function StudentOrderPage() {
     id: string;
     trackingCode: string;
     referralCode?: string;
+    issuedPassCode?: string;
     creditPassUsed?: string;
     remainingPassCredits?: number;
     priceDzd?: number;
@@ -151,6 +152,7 @@ export default function StudentOrderPage() {
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
 
   const validateCode = useCallback(
     async (rawCode: string, pkgId: PackageId) => {
@@ -219,9 +221,12 @@ export default function StudentOrderPage() {
   }, [validateCode]);
 
   useEffect(() => {
-    if (appliedDiscount?.valid && appliedDiscount.code) {
-      void validateCode(appliedDiscount.code, selectedPackageId);
+    const activeCode = (appliedDiscount?.code || promoInput).trim();
+    if (!appliedDiscount || !activeCode) return;
+    if (appliedDiscount.valid && appliedDiscount.kind === "credit_pass" && selectedPackageId === "standard") {
+      return;
     }
+    void validateCode(activeCode, selectedPackageId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPackageId]);
 
@@ -452,6 +457,7 @@ export default function StudentOrderPage() {
         id?: string;
         trackingCode?: string;
         referralCode?: string;
+        issuedPassCode?: string;
         creditPassUsed?: string;
         remainingPassCredits?: number;
         priceDzd?: number;
@@ -476,6 +482,7 @@ export default function StudentOrderPage() {
         id: data.id,
         trackingCode: data.trackingCode,
         referralCode: data.referralCode,
+        issuedPassCode: data.issuedPassCode,
         creditPassUsed: data.creditPassUsed,
         remainingPassCredits: data.remainingPassCredits,
         priceDzd: data.priceDzd ?? selectedPkg?.priceDzd,
@@ -702,6 +709,34 @@ export default function StudentOrderPage() {
             </button>
           </div>
 
+          {createdOrder.issuedPassCode && (
+            <div className="bg-navy-800 text-white rounded-2xl p-4 text-right space-y-2">
+              <p className="text-xs font-bold text-amber-300">
+                🎟️ تم إصدار رمز رصيد الأنشطة المتبقية تلقائيا!
+              </p>
+              <p className="text-xs text-slate-200 leading-relaxed">
+                استخدم هذا الرمز عند طلب أنشطتك القادمة في هذا السداسي لخصمها مجانا 100% دون إعادة الدفع:
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span dir="ltr" className="font-mono text-sm font-black px-3 py-1.5 rounded-lg bg-white text-navy-900">
+                  {createdOrder.issuedPassCode}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await copyToClipboard(createdOrder.issuedPassCode!);
+                    setCopiedPass(true);
+                    setTimeout(() => setCopiedPass(false), 2000);
+                  }}
+                  className="inline-flex items-center gap-1 min-h-[38px] px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-xs font-bold"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedPass ? "تم النسخ ✓" : "نسخ رمز الرصيد"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Viral Referral Share Card right after order submission */}
           {appConfig.referral?.enabled && createdOrder.referralCode && (
             <div className="bg-gradient-to-l from-amber-50 to-emerald-50 border border-emerald-200 rounded-2xl p-4 text-right space-y-2.5">
@@ -776,6 +811,8 @@ export default function StudentOrderPage() {
                 setNotes("");
                 setExerciseFiles([]);
                 setReferenceFiles([]);
+                setPromoInput("");
+                setAppliedDiscount(null);
               }}
               className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-medium text-sm hover:bg-slate-50"
             >
@@ -1230,7 +1267,7 @@ export default function StudentOrderPage() {
                 value={promoInput}
                 onChange={(e) => {
                   setPromoInput(e.target.value.toUpperCase());
-                  if (!e.target.value.trim()) setAppliedDiscount(null);
+                  setAppliedDiscount(null);
                 }}
                 placeholder="مثال: PASS-XXXXX أو FREE-XXXXX أو REF-XXXXX"
                 className="flex-1 min-h-[44px] px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs uppercase focus:outline-none focus:ring-2 focus:ring-navy-600"

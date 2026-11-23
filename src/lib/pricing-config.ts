@@ -1,7 +1,11 @@
 import fs from "fs/promises";
 import path from "path";
 import type { PackageId, PricingPackage, PublicAppConfig } from "@/types/order";
-import { getFirestoreDb } from "./firebase-admin";
+import {
+  getFirestoreDb,
+  getLocalDataDir,
+  sanitizeForFirestore,
+} from "./firebase-admin";
 
 const SETTINGS_COLLECTION = "app_settings";
 const SETTINGS_DOC_ID = "commercial";
@@ -13,11 +17,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 }
 
 function getLocalSettingsPath(): string {
-  const dir =
-    process.env.VERCEL || process.env.NETLIFY
-      ? path.join("/tmp", "acad-solver-data")
-      : path.join(process.cwd(), ".data");
-  return path.join(dir, "commercial-settings.json");
+  return path.join(getLocalDataDir(), "commercial-settings.json");
 }
 
 function buildDefaultPackages(): PricingPackage[] {
@@ -176,10 +176,10 @@ async function readStoredOverrides(): Promise<StoredCommercialOverrides | null> 
 export async function saveCommercialOverrides(
   overrides: StoredCommercialOverrides
 ): Promise<PublicAppConfig> {
-  const payload: StoredCommercialOverrides = {
+  const payload = sanitizeForFirestore<StoredCommercialOverrides>({
     ...overrides,
     updatedAt: new Date().toISOString(),
-  };
+  });
 
   const db = getFirestoreDb();
   if (db) {

@@ -2,7 +2,11 @@ import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import type { CreditPassEntry, StudentOrder } from "@/types/order";
-import { getFirestoreDb } from "./firebase-admin";
+import {
+  getFirestoreDb,
+  getLocalDataDir,
+  sanitizeForFirestore,
+} from "./firebase-admin";
 import {
   getPublicAppConfigAsync,
   resolvePackagePriceAsync,
@@ -12,12 +16,24 @@ import { sendTelegramAlert } from "./notify";
 
 const PASS_COLLECTION = "credit_passes";
 
+let localPassLock: Promise<void> = Promise.resolve();
+
+async function withLocalPassLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = localPassLock;
+  let release!: () => void;
+  localPassLock = new Promise<void>((res) => {
+    release = res;
+  });
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 function getLocalPassesPath(): string {
-  const dir =
-    process.env.VERCEL || process.env.NETLIFY
-      ? path.join("/tmp", "acad-solver-data")
-      : path.join(process.cwd(), ".data");
-  return path.join(dir, "credit-passes.json");
+  return path.join(getLocalDataDir(), "credit-passes.json");
 }
 
 async function readLocalPasses(): Promise<CreditPassEntry[]> {
@@ -35,7 +51,7 @@ async function writeLocalPasses(entries: CreditPassEntry[]): Promise<void> {
   await fs.writeFile(p, JSON.stringify(entries, null, 2), "utf-8");
 }
 
-function normalizePassCode(raw: string): string {
+export function normalizePassCode(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
 
@@ -48,10 +64,20 @@ function generatePassCode(): string {
   return out;
 }
 
+async function generateUniquePassCode(): Promise<string> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const candidate = generatePassCode();
+    const existing = await getCreditPass(candidate);
+    if (!existing) return candidate;
+  }
+  return `PASS-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+}
+
 function computeSemesterExpiryIso(configuredYmd?: string): string {
   if (configuredYmd && /^\d{4}-\d{2}-\d{2}$/.test(configuredYmd.trim())) {
     const dt = new Date(`${configuredYmd.trim()}T23:59:59.000Z`);
-    if (!Number.isNaN(dt.getTime())) {
+    // Guard against stale/past semester dates issuing already-expired passes
+    if (!Number.isNaN(dt.getTime()) && dt.getTime() > Date.now()) {
       return dt.toISOString();
     }
   }
@@ -71,27 +97,47 @@ export async function getCreditPass(rawCode: string): Promise<CreditPassEntry | 
   return all.find((p) => p.passCode === passCode) ?? null;
 }
 
-async function saveCreditPass(entry: CreditPassEntry): Promise<void> {
+async function findCreditPassByOwnerOrderId(
+  ownerOrderId: string
+): Promise<CreditPassEntry | null> {
+  if (!ownerOrderId) return null;
   const db = getFirestoreDb();
   if (db) {
-    await db.collection(PASS_COLLECTION).doc(entry.passCode).set(entry);
-    return;
+    const snap = await db
+      .collection(PASS_COLLECTION)
+      .where("ownerOrderId", "==", ownerOrderId)
+      .limit(1)
+      .get();
+    return snap.empty ? null : (snap.docs[0].data() as CreditPassEntry);
   }
   const all = await readLocalPasses();
-  const idx = all.findIndex((p) => p.passCode === entry.passCode);
-  if (idx >= 0) all[idx] = entry;
-  else all.unshift(entry);
-  await writeLocalPasses(all);
+  return all.find((p) => p.ownerOrderId === ownerOrderId) ?? null;
 }
 
-export async function validateCreditPass(rawCode: string): Promise<{
+async function saveCreditPass(entry: CreditPassEntry): Promise<void> {
+  const clean = sanitizeForFirestore(entry);
+  const db = getFirestoreDb();
+  if (db) {
+    await db.collection(PASS_COLLECTION).doc(clean.passCode).set(clean);
+    return;
+  }
+  await withLocalPassLock(async () => {
+    const all = await readLocalPasses();
+    const idx = all.findIndex((p) => p.passCode === clean.passCode);
+    if (idx >= 0) all[idx] = clean;
+    else all.unshift(clean);
+    await writeLocalPasses(all);
+  });
+}
+
+export function evaluateCreditPassEntry(
+  pass: CreditPassEntry | null
+): {
   valid: boolean;
   pass?: CreditPassEntry;
   remainingCredits: number;
   message: string;
-}> {
-  const passCode = normalizePassCode(rawCode);
-  const pass = await getCreditPass(passCode);
+} {
   if (!pass) {
     return { valid: false, remainingCredits: 0, message: "رمز الرصيد غير موجود." };
   }
@@ -124,6 +170,17 @@ export async function validateCreditPass(rawCode: string): Promise<{
   };
 }
 
+export async function validateCreditPass(rawCode: string): Promise<{
+  valid: boolean;
+  pass?: CreditPassEntry;
+  remainingCredits: number;
+  message: string;
+}> {
+  const passCode = normalizePassCode(rawCode);
+  const pass = await getCreditPass(passCode);
+  return evaluateCreditPassEntry(pass);
+}
+
 /**
  * Automatically issues a semester-scoped Pass Code when a multi-activity order (3 or 17 credits)
  * is marked paid/waived. Idempotent: never issues duplicate passes for the same order.
@@ -138,23 +195,33 @@ export async function issueCreditPassForOrder(
     return getCreditPass(order.issuedPassCode);
   }
 
+  // Secondary idempotency check in case pass was persisted before order update completed
+  const existingByOwner = await findCreditPassByOwnerOrderId(order.id);
+  if (existingByOwner) {
+    await updateOrder(order.id, (cur) => ({
+      ...cur,
+      issuedPassCode: existingByOwner.passCode,
+    }));
+    return existingByOwner;
+  }
+
   const pkg = await resolvePackagePriceAsync(order.packageId);
   if (pkg.creditsCount <= 1) return null;
 
   const cfg = await getPublicAppConfigAsync();
   const now = new Date().toISOString();
-  const passCode = generatePassCode();
+  const passCode = await generateUniquePassCode();
   const expiresAt = computeSemesterExpiryIso(cfg.semesterPassExpiresAt);
 
-  const entry: CreditPassEntry = {
+  const entry = sanitizeForFirestore<CreditPassEntry>({
     passCode,
     ownerOrderId: order.id,
     studentName: order.studentName,
     contact: order.contact,
     university: order.university,
-    cycle: order.cycle,
-    year: order.year,
-    specialtyId: order.specialtyId,
+    ...(order.cycle ? { cycle: order.cycle } : {}),
+    ...(order.year ? { year: order.year } : {}),
+    ...(order.specialtyId ? { specialtyId: order.specialtyId } : {}),
     specialty: order.specialty,
     packageId: pkg.packageId,
     totalCredits: pkg.creditsCount,
@@ -164,7 +231,7 @@ export async function issueCreditPassForOrder(
     active: true,
     createdAt: now,
     updatedAt: now,
-  };
+  });
 
   await saveCreditPass(entry);
   await updateOrder(order.id, (cur) => ({
@@ -183,19 +250,110 @@ export async function issueCreditPassForOrder(
   return entry;
 }
 
+/**
+ * Atomically consumes one credit from a valid pass code.
+ * Uses a Firestore transaction in production and a serialized lock in local mode
+ * so concurrent requests can never double-spend the last remaining credit.
+ */
 export async function consumeOneCredit(
   rawPassCode: string,
   newOrderId: string
 ): Promise<CreditPassEntry | null> {
-  const check = await validateCreditPass(rawPassCode);
-  if (!check.valid || !check.pass) return null;
+  const passCode = normalizePassCode(rawPassCode);
+  if (!passCode || !newOrderId) return null;
 
-  const updated: CreditPassEntry = {
-    ...check.pass,
-    usedCredits: check.pass.usedCredits + 1,
-    consumedOrderIds: [...check.pass.consumedOrderIds, newOrderId],
-    updatedAt: new Date().toISOString(),
-  };
-  await saveCreditPass(updated);
-  return updated;
+  const db = getFirestoreDb();
+  if (db) {
+    const ref = db.collection(PASS_COLLECTION).doc(passCode);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return null;
+      const pass = snap.data() as CreditPassEntry;
+      // Idempotent guard if retried with same orderId
+      if (pass.consumedOrderIds.includes(newOrderId)) {
+        return pass;
+      }
+      const check = evaluateCreditPassEntry(pass);
+      if (!check.valid) return null;
+
+      const updated = sanitizeForFirestore<CreditPassEntry>({
+        ...pass,
+        usedCredits: pass.usedCredits + 1,
+        consumedOrderIds: [...pass.consumedOrderIds, newOrderId],
+        updatedAt: new Date().toISOString(),
+      });
+      tx.set(ref, updated);
+      return updated;
+    });
+  }
+
+  return withLocalPassLock(async () => {
+    const all = await readLocalPasses();
+    const idx = all.findIndex((p) => p.passCode === passCode);
+    if (idx < 0) return null;
+    const pass = all[idx];
+    if (pass.consumedOrderIds.includes(newOrderId)) {
+      return pass;
+    }
+    const check = evaluateCreditPassEntry(pass);
+    if (!check.valid) return null;
+
+    const updated = sanitizeForFirestore<CreditPassEntry>({
+      ...pass,
+      usedCredits: pass.usedCredits + 1,
+      consumedOrderIds: [...pass.consumedOrderIds, newOrderId],
+      updatedAt: new Date().toISOString(),
+    });
+    all[idx] = updated;
+    await writeLocalPasses(all);
+    return updated;
+  });
+}
+
+/**
+ * Compensating rollback if order creation fails after consuming a credit.
+ */
+export async function refundOneCredit(
+  rawPassCode: string,
+  orderId: string
+): Promise<boolean> {
+  const passCode = normalizePassCode(rawPassCode);
+  if (!passCode || !orderId) return false;
+
+  const db = getFirestoreDb();
+  if (db) {
+    const ref = db.collection(PASS_COLLECTION).doc(passCode);
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return false;
+      const pass = snap.data() as CreditPassEntry;
+      if (!pass.consumedOrderIds.includes(orderId)) return false;
+
+      const updated = sanitizeForFirestore<CreditPassEntry>({
+        ...pass,
+        usedCredits: Math.max(0, pass.usedCredits - 1),
+        consumedOrderIds: pass.consumedOrderIds.filter((id) => id !== orderId),
+        updatedAt: new Date().toISOString(),
+      });
+      tx.set(ref, updated);
+      return true;
+    });
+  }
+
+  return withLocalPassLock(async () => {
+    const all = await readLocalPasses();
+    const idx = all.findIndex((p) => p.passCode === passCode);
+    if (idx < 0) return false;
+    const pass = all[idx];
+    if (!pass.consumedOrderIds.includes(orderId)) return false;
+
+    all[idx] = sanitizeForFirestore<CreditPassEntry>({
+      ...pass,
+      usedCredits: Math.max(0, pass.usedCredits - 1),
+      consumedOrderIds: pass.consumedOrderIds.filter((id) => id !== orderId),
+      updatedAt: new Date().toISOString(),
+    });
+    await writeLocalPasses(all);
+    return true;
+  });
 }
