@@ -1041,14 +1041,14 @@ export default function StudentOrderPage() {
             </div>
             <div>
               <label className="block text-sm font-bold text-slate-700 mb-1.5">
-                عنوان النشاط أو رقمه <span className="text-red-500">*</span>
+                رقم النشاط <span className="text-red-500">*</span>
               </label>
               <input
                 required
                 type="text"
                 value={assignmentTitle}
                 onChange={(e) => setAssignmentTitle(e.target.value)}
-                placeholder="مثال: النشاط المنزلي الأول"
+                placeholder="مثال: النشاط الثاني"
                 className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
@@ -1067,7 +1067,7 @@ export default function StudentOrderPage() {
               </p>
               <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-white border border-navy-200 hover:border-navy-600 text-xs font-bold text-navy-700 cursor-pointer shadow-sm">
                 <FileUp className="w-4 h-4" />
-                اختيار ملفات التمرين
+                اختيار ملف النشاط
                 <input
                   type="file"
                   multiple
@@ -1120,12 +1120,12 @@ export default function StudentOrderPage() {
                     المراجع الرسمية لمقياس «{matchedLibraryModule.moduleName}» متوفرة تلقائيا — لا تحتاج لإعادة رفعها!
                   </p>
                   <p className="text-[11px] text-emerald-800">
-                    يمكنك اختياريا إرفاق صور من كراسك أو ملاحظات أستاذك في المدرج لإدماجها في الحل.
+                    يمكنك اختيارياً إرفاق صور من كراسك أو ملاحظاتك من الدروس الحضورية لإدماجها في الحل.
                   </p>
                 </div>
               ) : (
                 <p className="text-xs text-slate-500 mb-3">
-                  ارفع المحاضرات والمطبوعات المعتمدة أو صور ملاحظاتك الشخصية من المدرج للالتزام بقوانينها ورموزها.
+                  ارفع المحاضرات والمطبوعات المعتمدة أو صور ملاحظاتك الشخصية من الدروس الحضورية للالتزام بمحتواها وأسلوب الأستاذ المحاضر.
                 </p>
               )}
               <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-white border border-slate-300 hover:border-navy-600 text-xs font-bold text-slate-700 cursor-pointer shadow-sm">
@@ -1186,7 +1186,7 @@ export default function StudentOrderPage() {
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="مثال: مستوى المعنوية 5%، تقريب النتائج إلى 4 أرقام بعد الفاصلة..."
+                placeholder="مثال: الالتزام بتوجيه معين من الأستاذ، لغة الإجابة المطلوبة، أو أي تفاصيل إضافية تود مراعاتها..."
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
             </div>
@@ -1218,7 +1218,7 @@ export default function StudentOrderPage() {
           <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2.5">
             <label className="flex items-center gap-1.5 text-xs font-extrabold text-navy-800">
               <Tag className="w-3.5 h-3.5 text-amber-600" />
-              هل لديك رمز رصيد السداسي (PASS-...) أو كود برومو أو كود إحالة زميل؟
+              هل لديك رمز رصيد، كود برومو أو كود إحالة زميل؟
             </label>
             <div className="flex flex-col sm:flex-row gap-2">
               <input
