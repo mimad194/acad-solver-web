@@ -61,7 +61,9 @@ export default function AdminDashboardPage() {
   const [newPromoCode, setNewPromoCode] = useState("");
   const [newPromoPct, setNewPromoPct] = useState("25");
   const [newPromoMaxUses, setNewPromoMaxUses] = useState("0");
+  const [newPromoBatchCount, setNewPromoBatchCount] = useState("1");
   const [newPromoNote, setNewPromoNote] = useState("");
+  const [lastBatchCodes, setLastBatchCodes] = useState<string[]>([]);
   const [promoMsg, setPromoMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [savingPromo, setSavingPromo] = useState(false);
 
@@ -121,6 +123,8 @@ export default function AdminDashboardPage() {
     e.preventDefault();
     setSavingPromo(true);
     setPromoMsg(null);
+    setLastBatchCodes([]);
+    const batch = Math.max(1, Number(newPromoBatchCount) || 1);
     try {
       const res = await fetch("/api/admin/promos", {
         method: "POST",
@@ -128,7 +132,8 @@ export default function AdminDashboardPage() {
         body: JSON.stringify({
           code: newPromoCode,
           discountPercent: Number(newPromoPct),
-          maxUses: Number(newPromoMaxUses) || 0,
+          maxUses: batch > 1 ? 1 : Number(newPromoMaxUses) || 0,
+          batchCount: batch,
           note: newPromoNote,
           active: true,
         }),
@@ -137,7 +142,16 @@ export default function AdminDashboardPage() {
       if (!res.ok) throw new Error(data.error || "تعذر إنشاء الكود.");
       setNewPromoCode("");
       setNewPromoNote("");
-      setPromoMsg({ type: "ok", text: `تم إنشاء كود البرومو (${data.promo.code}) بنجاح!` });
+      if (Array.isArray(data.promos) && data.promos.length > 1) {
+        const codes = data.promos.map((p: PromoCodeEntry) => p.code);
+        setLastBatchCodes(codes);
+        setPromoMsg({
+          type: "ok",
+          text: `تم توليد ${codes.length} أكواد فردية (استخدام واحد لكل كود): ${codes.join(" ، ")}`,
+        });
+      } else {
+        setPromoMsg({ type: "ok", text: `تم إنشاء كود البرومو (${data.promo.code}) بنجاح!` });
+      }
       void loadPromos();
     } catch (err) {
       setPromoMsg({
@@ -187,6 +201,9 @@ export default function AdminDashboardPage() {
             subtitle: p.subtitle,
             badge: p.badge ?? "",
             priceDzd: p.priceDzd,
+            features: p.features
+              .map((f) => f.trim())
+              .filter(Boolean),
           })),
         }),
       });
@@ -504,6 +521,24 @@ export default function AdminDashboardPage() {
                     className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs"
                   />
                 </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    نقاط البطاقة / المزايا (ميزة واحدة في كل سطر)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={pkg.features.join("\n")}
+                    onChange={(e) => {
+                      const next = [...settingsConfig.packages];
+                      next[idx] = {
+                        ...pkg,
+                        features: e.target.value.split("\n"),
+                      };
+                      setSettingsConfig({ ...settingsConfig, packages: next });
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs leading-relaxed"
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -721,23 +756,32 @@ export default function AdminDashboardPage() {
 
           {promoMsg && (
             <div
-              className={`p-3 rounded-xl text-xs font-bold border ${
+              className={`p-3 rounded-xl text-xs font-bold border flex flex-wrap items-center justify-between gap-2 ${
                 promoMsg.type === "ok"
                   ? "bg-emerald-50 border-emerald-200 text-emerald-800"
                   : "bg-red-50 border-red-200 text-red-700"
               }`}
             >
-              {promoMsg.text}
+              <span>{promoMsg.text}</span>
+              {lastBatchCodes.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(lastBatchCodes.join("\n"))}
+                  className="px-2.5 py-1 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold shrink-0"
+                >
+                  نسخ كل الأكواد
+                </button>
+              )}
             </div>
           )}
 
           <form
             onSubmit={handleCreatePromo}
-            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200"
           >
             <div>
               <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                الكود (إنجليزي/أرقام)
+                {Number(newPromoBatchCount) > 1 ? "بادئة الدفعة (مثل VIP)" : "الكود (مثل LAUNCH30)"}
               </label>
               <input
                 required
@@ -745,7 +789,7 @@ export default function AdminDashboardPage() {
                 dir="ltr"
                 value={newPromoCode}
                 onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
-                placeholder="UFC100 أو LAUNCH40"
+                placeholder={Number(newPromoBatchCount) > 1 ? "VIP" : "LAUNCH30"}
                 className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold uppercase"
               />
             </div>
@@ -765,14 +809,29 @@ export default function AdminDashboardPage() {
             </div>
             <div>
               <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                أقصى عدد استخدامات (0=مفتوح)
+                عدد الأكواد المولّدة
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={newPromoBatchCount}
+                onChange={(e) => setNewPromoBatchCount(e.target.value)}
+                title="1 = كود مشترك واحد، أكثر من 1 = أكواد فردية كل منها استخدام واحد فقط"
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                {Number(newPromoBatchCount) > 1 ? "حد الاستخدام (تلقائي 1)" : "حد الاستخدام (0=مفتوح)"}
               </label>
               <input
                 type="number"
                 min={0}
-                value={newPromoMaxUses}
+                disabled={Number(newPromoBatchCount) > 1}
+                value={Number(newPromoBatchCount) > 1 ? "1" : newPromoMaxUses}
                 onChange={(e) => setNewPromoMaxUses(e.target.value)}
-                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono"
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white disabled:bg-slate-100 text-xs font-mono"
               />
             </div>
             <div>
@@ -783,7 +842,7 @@ export default function AdminDashboardPage() {
                 type="text"
                 value={newPromoNote}
                 onChange={(e) => setNewPromoNote(e.target.value)}
-                placeholder="مندوب دفعة M2..."
+                placeholder="مندوبو دفعة M2..."
                 className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs"
               />
             </div>
@@ -793,7 +852,11 @@ export default function AdminDashboardPage() {
               className="inline-flex items-center justify-center gap-1.5 py-2 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs"
             >
               <Plus className="w-4 h-4" />
-              {savingPromo ? "جاري الإنشاء..." : "إنشاء الكود"}
+              {savingPromo
+                ? "جاري الإنشاء..."
+                : Number(newPromoBatchCount) > 1
+                ? `توليد ${newPromoBatchCount} أكواد فردية`
+                : "إنشاء الكود"}
             </button>
           </form>
 

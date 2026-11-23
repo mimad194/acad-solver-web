@@ -144,6 +144,7 @@ export interface StoredCommercialOverrides {
     subtitle?: string;
     badge?: string;
     priceDzd?: number;
+    features?: string[];
   }>;
   updatedAt?: string;
 }
@@ -194,6 +195,9 @@ export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
   const mergedPackages = base.packages.map((pkg) => {
     const patch = ov.packages?.find((p) => p.id === pkg.id);
     if (!patch) return pkg;
+    const cleanedFeatures = Array.isArray(patch.features)
+      ? patch.features.map((f) => String(f).trim()).filter(Boolean)
+      : null;
     return {
       ...pkg,
       name: patch.name?.trim() || pkg.name,
@@ -203,6 +207,10 @@ export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
         typeof patch.priceDzd === "number" && Number.isFinite(patch.priceDzd) && patch.priceDzd >= 0
           ? Math.round(patch.priceDzd)
           : pkg.priceDzd,
+      features:
+        cleanedFeatures && cleanedFeatures.length > 0
+          ? cleanedFeatures
+          : pkg.features,
     };
   });
 
