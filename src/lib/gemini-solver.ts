@@ -280,8 +280,15 @@ export async function generateSolutionWithGemini(
       }
     }
 
-    // Fallback to next candidate model on 404 (unavailable/retired) or 429 (quota/rate limit)
-    if (response.status === 404 || response.status === 429) {
+    // Fallback to next candidate model on 404 (unavailable/retired), 429 (quota), or 500/502/503/504 (high demand / transient error)
+    if (
+      response.status === 404 ||
+      response.status === 429 ||
+      response.status === 500 ||
+      response.status === 502 ||
+      response.status === 503 ||
+      response.status === 504
+    ) {
       continue;
     }
     break;
