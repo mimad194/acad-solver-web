@@ -529,19 +529,132 @@ export function formatSpecialtyDisplay(
   return `${yearShort} — ${found.label}`;
 }
 
+export interface UfcModuleOption {
+  name: string;
+}
+
+export interface UfcSemesterGroup {
+  semesterCode: "S1" | "S2" | "S3" | "S4" | "S5" | "S6";
+  label: string;
+  modules: UfcModuleOption[];
+}
+
+export interface UfcYearCurriculum {
+  cycle: AcademicCycle;
+  year: AcademicYearCode;
+  specialtyId: string;
+  semesters: UfcSemesterGroup[];
+}
+
+// ============================================================================
+// OFFICIAL MODULE CURRICULA (Semester-Grouped)
+// ============================================================================
+
+export const UFC_MODULE_CATALOG: UfcYearCurriculum[] = [
+  {
+    cycle: "master",
+    year: "M1",
+    specialtyId: "m_org_management",
+    semesters: [
+      {
+        semesterCode: "S1",
+        label: "السداسي الأول (S1)",
+        modules: [
+          { name: "مبادئ الإدارة المعاصرة" },
+          { name: "نظرية المنظمة" },
+          { name: "قانون المنازعات الإدارية" },
+          { name: "إدارة الاجتماعات" },
+          { name: "منهجية البحث العلمي" },
+          { name: "قانون الصفقات العمومية" },
+          { name: "قانون العمل" },
+          { name: "لغة إنجليزية للأعمال 1" },
+          { name: "الذكاء الاصطناعي" },
+        ],
+      },
+      {
+        semesterCode: "S2",
+        label: "السداسي الثاني (S2)",
+        modules: [
+          { name: "مراقبة التسيير" },
+          { name: "الإدارة الاستراتيجية" },
+          { name: "إدارة الموازنة العامة" },
+          { name: "التحرير الإداري" },
+          { name: "التقنيات الإحصائية" },
+          { name: "قانون الوظيف العمومي" },
+          { name: "النزاهة ومكافحة الفساد" },
+          { name: "لغة إنجليزية للأعمال 2" },
+          { name: "الأمن السيبراني" },
+        ],
+      },
+    ],
+  },
+  {
+    cycle: "master",
+    year: "M2",
+    specialtyId: "m_org_management",
+    semesters: [
+      {
+        semesterCode: "S3",
+        label: "السداسي الثالث (S3)",
+        modules: [
+          { name: "قانون الأعمال" },
+          { name: "إدارة الموارد البشرية" },
+          { name: "المحاسبة والتسيير المالي" },
+          { name: "أصول التفاوض" },
+          { name: "تحليل المعطيات" },
+          { name: "الاقتصاد الجزائري والعولمة" },
+          { name: "الاقتصاد الأخضر" },
+          { name: "لغة إنجليزية للأعمال 3" },
+          { name: "إدارة الجودة" },
+        ],
+      },
+      {
+        semesterCode: "S4",
+        label: "السداسي الرابع (S4)",
+        modules: [
+          { name: "العمل الشخصي (إعداد مذكرة التخرج)" },
+          { name: "الدراسة الميدانية (اختياري)" },
+          { name: "حضور الملتقيات والدورات (اختياري)" },
+          { name: "أعمال أخرى (اختياري)" },
+        ],
+      },
+    ],
+  },
+];
+
+export function getModulesFor(
+  cycle?: AcademicCycle,
+  year?: AcademicYearCode,
+  specialtyId?: string
+): UfcSemesterGroup[] {
+  if (!cycle || !year || !specialtyId) return [];
+  return (
+    UFC_MODULE_CATALOG.find(
+      (c) => c.cycle === cycle && c.year === year && c.specialtyId === specialtyId
+    )?.semesters ?? []
+  );
+}
+
+export function normalizeModuleName(moduleName: string): string {
+  return moduleName
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200F\uFEFF]/g, "")
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 export function normalizeCourseKey(
   cycle: AcademicCycle,
   year: AcademicYearCode,
   specialtyId: string,
   moduleName: string
 ): string {
-  const cleanMod = moduleName
-    .trim()
-    .toLowerCase()
-    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/\s+/g, " ");
+  const cleanMod = normalizeModuleName(moduleName);
   return `${cycle}|${year}|${specialtyId}|${cleanMod}`;
 }

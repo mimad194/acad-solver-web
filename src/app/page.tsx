@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { upload } from "@vercel/blob/client";
 import {
@@ -32,11 +32,14 @@ import type {
 import {
   UFC_CYCLES,
   formatSpecialtyDisplay,
+  getModulesFor,
   getSpecialtiesFor,
   getYearsForCycle,
   normalizeCourseKey,
 } from "@/lib/ufc-catalog";
 import { copyToClipboard } from "@/lib/clipboard";
+
+const CUSTOM_MODULE_VALUE = "__custom__";
 
 interface LibraryModuleSummary {
   id: string;
@@ -109,6 +112,7 @@ export default function StudentOrderPage() {
   const [specialtyId, setSpecialtyId] = useState<string>("m_org_management");
   const [customSpecialty, setCustomSpecialty] = useState("");
   const [moduleName, setModuleName] = useState("");
+  const [customModuleMode, setCustomModuleMode] = useState(false);
   const [assignmentTitle, setAssignmentTitle] = useState("");
   const [exerciseText, setExerciseText] = useState("");
   const [notes, setNotes] = useState("");
@@ -262,6 +266,48 @@ export default function StudentOrderPage() {
       setSpecialtyId(nextSpecs[0]?.id ?? "other");
     }
   };
+
+  const prevTrackRef = useRef(`${cycle}|${year}|${specialtyId}`);
+  useEffect(() => {
+    const nextTrack = `${cycle}|${year}|${specialtyId}`;
+    if (prevTrackRef.current === nextTrack) return;
+    prevTrackRef.current = nextTrack;
+
+    const nextGroups =
+      specialtyId !== "other" ? getModulesFor(cycle, year, specialtyId) : [];
+    const nextModuleNames = nextGroups.flatMap((g) => g.modules.map((m) => m.name));
+    const matchesNextCatalog =
+      moduleName.trim().length > 0 &&
+      nextModuleNames.some(
+        (name) =>
+          normalizeCourseKey(cycle, year, specialtyId, name) ===
+          normalizeCourseKey(cycle, year, specialtyId, moduleName)
+      );
+
+    if (!matchesNextCatalog) {
+      setModuleName("");
+    }
+    setCustomModuleMode(false);
+  }, [cycle, year, specialtyId, moduleName]);
+
+  const semesterGroups =
+    specialtyId !== "other" ? getModulesFor(cycle, year, specialtyId) : [];
+  const hasStructuredModules = semesterGroups.length > 0;
+  const catalogModuleNames = semesterGroups.flatMap((g) =>
+    g.modules.map((m) => m.name)
+  );
+  const libraryKeySet = new Set(
+    specialtyId !== "other"
+      ? libraryModules.map((m) =>
+          normalizeCourseKey(cycle, year, specialtyId, m.moduleName)
+        )
+      : []
+  );
+  const selectedModuleOption = customModuleMode
+    ? CUSTOM_MODULE_VALUE
+    : catalogModuleNames.includes(moduleName)
+    ? moduleName
+    : "";
 
   const matchedLibraryModule =
     specialtyId !== "other" && moduleName.trim()
@@ -890,40 +936,107 @@ export default function StudentOrderPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-bold text-slate-700 mb-1.5">
+              <label
+                htmlFor="module-name-field"
+                className="block text-sm font-bold text-slate-700 mb-1.5"
+              >
                 اسم المقياس <span className="text-red-500">*</span>
               </label>
-              <input
-                required
-                type="text"
-                value={moduleName}
-                onChange={(e) => setModuleName(e.target.value)}
-                placeholder="مثال: تحليل المعطيات"
-                className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
-              />
-              {libraryModules.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  <p className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
-                    <Library className="w-3.5 h-3.5" />
-                    مقاييس متوفرة مراجعها الرسمية تلقائيا في المكتبة (اختر بنقرة واحدة):
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {libraryModules.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => setModuleName(m.moduleName)}
-                        className={`min-h-[34px] px-3 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                          matchedLibraryModule?.id === m.id
-                            ? "bg-emerald-600 text-white border-emerald-600"
-                            : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
-                        }`}
-                      >
-                        {m.moduleName} ✓
-                      </button>
+              {hasStructuredModules ? (
+                <>
+                  <select
+                    id="module-name-field"
+                    required={!customModuleMode}
+                    value={selectedModuleOption}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === CUSTOM_MODULE_VALUE) {
+                        setCustomModuleMode(true);
+                        setModuleName("");
+                      } else {
+                        setCustomModuleMode(false);
+                        setModuleName(val);
+                      }
+                    }}
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  >
+                    <option value="" disabled>
+                      — اختر المقياس من قائمة السداسيات —
+                    </option>
+                    {semesterGroups.map((group) => (
+                      <optgroup key={group.semesterCode} label={group.label}>
+                        {group.modules.map((mod) => {
+                          const hasRef = libraryKeySet.has(
+                            normalizeCourseKey(cycle, year, specialtyId, mod.name)
+                          );
+                          return (
+                            <option
+                              key={`${group.semesterCode}-${mod.name}`}
+                              value={mod.name}
+                            >
+                              {hasRef ? `${mod.name} ✓` : mod.name}
+                            </option>
+                          );
+                        })}
+                      </optgroup>
                     ))}
-                  </div>
-                </div>
+                    <option value={CUSTOM_MODULE_VALUE}>
+                      مقياس آخر (كتابة يدوية)...
+                    </option>
+                  </select>
+                  {customModuleMode && (
+                    <input
+                      required
+                      type="text"
+                      value={moduleName}
+                      onChange={(e) => setModuleName(e.target.value)}
+                      placeholder="اكتب اسم المقياس بالضبط..."
+                      className="mt-2 w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                    />
+                  )}
+                  {libraryModules.length > 0 && (
+                    <p className="mt-1.5 text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                      <Library className="w-3.5 h-3.5 shrink-0" />
+                      المقاييس المميزة بعلامة (✓) متوفرة مراجعها الرسمية تلقائيا في المكتبة.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <input
+                    id="module-name-field"
+                    required
+                    type="text"
+                    value={moduleName}
+                    onChange={(e) => setModuleName(e.target.value)}
+                    placeholder="مثال: تحليل المعطيات"
+                    className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-navy-600"
+                  />
+                  {libraryModules.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                        <Library className="w-3.5 h-3.5" />
+                        مقاييس متوفرة مراجعها الرسمية تلقائيا في المكتبة (اختر بنقرة واحدة):
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {libraryModules.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setModuleName(m.moduleName)}
+                            className={`min-h-[44px] px-3.5 py-2 rounded-full text-xs font-bold border transition-colors ${
+                              matchedLibraryModule?.id === m.id
+                                ? "bg-emerald-600 text-white border-emerald-600"
+                                : "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                            }`}
+                          >
+                            {m.moduleName} ✓
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
             <div>
