@@ -608,31 +608,47 @@ export const UFC_MODULE_CATALOG: UfcYearCurriculum[] = [
           { name: "إدارة الجودة" },
         ],
       },
-      {
-        semesterCode: "S4",
-        label: "السداسي الرابع (S4)",
-        modules: [
-          { name: "العمل الشخصي (إعداد مذكرة التخرج)" },
-          { name: "الدراسة الميدانية (اختياري)" },
-          { name: "حضور الملتقيات والدورات (اختياري)" },
-          { name: "أعمال أخرى (اختياري)" },
-        ],
-      },
     ],
   },
 ];
 
+/**
+ * Temporal semester intelligence (Algeria UFC academic calendar, UTC+1):
+ * - September to January (months 9, 10, 11, 12, 1) -> odd semesters (S1, S3, S5)
+ * - February to August (months 2..8)               -> even semesters (S2, S6)
+ * Uses fixed UTC+1 offset so SSR and client hydration always agree.
+ */
+export function getActiveSemesterParity(now: Date = new Date()): "odd" | "even" {
+  const algeriaMonth = new Date(now.getTime() + 60 * 60 * 1000).getUTCMonth() + 1;
+  return algeriaMonth >= 9 || algeriaMonth <= 1 ? "odd" : "even";
+}
+
+function isSemesterCodeInParity(
+  code: UfcSemesterGroup["semesterCode"],
+  parity: "odd" | "even"
+): boolean {
+  const num = Number(code.slice(1));
+  return parity === "odd" ? num % 2 === 1 : num % 2 === 0;
+}
+
 export function getModulesFor(
   cycle?: AcademicCycle,
   year?: AcademicYearCode,
-  specialtyId?: string
+  specialtyId?: string,
+  options?: { activeOnly?: boolean; now?: Date }
 ): UfcSemesterGroup[] {
   if (!cycle || !year || !specialtyId) return [];
-  return (
+  const semesters =
     UFC_MODULE_CATALOG.find(
       (c) => c.cycle === cycle && c.year === year && c.specialtyId === specialtyId
-    )?.semesters ?? []
-  );
+    )?.semesters ?? [];
+
+  if (options?.activeOnly === false) {
+    return semesters;
+  }
+
+  const parity = getActiveSemesterParity(options?.now);
+  return semesters.filter((s) => isSemesterCodeInParity(s.semesterCode, parity));
 }
 
 export function normalizeModuleName(moduleName: string): string {

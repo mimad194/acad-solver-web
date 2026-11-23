@@ -961,7 +961,7 @@ export default function StudentOrderPage() {
                     className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-navy-600"
                   >
                     <option value="" disabled>
-                      — اختر المقياس من قائمة السداسيات —
+                      — اختر المقياس —
                     </option>
                     {semesterGroups.map((group) => (
                       <optgroup key={group.semesterCode} label={group.label}>
