@@ -46,10 +46,8 @@ export const DEFAULT_MODEL_PRIORITY = [
   "gemini-3.6-flash",
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite-preview",
   "gemini-3.1-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
 ];
 
 const MODEL_DISPLAY_PATTERNS: Record<string, string[]> = {
@@ -59,14 +57,12 @@ const MODEL_DISPLAY_PATTERNS: Record<string, string[]> = {
   "gemini-3.6-flash": ["gemini 3.6 flash", "gemini-3.6-flash"],
   "gemini-3.5-flash": ["gemini 3.5 flash", "gemini-3.5-flash"],
   "gemini-3.5-flash-lite": ["gemini 3.5 flash lite", "gemini-3.5-flash-lite"],
+  "gemini-3.1-flash-lite-preview": ["gemini 3.1 flash lite preview", "gemini-3.1-flash-lite-preview"],
   "gemini-3.1-flash-lite": ["gemini 3.1 flash lite", "gemini-3.1-flash-lite"],
-  "gemini-2.5-pro": ["gemini 2.5 pro", "gemini-2.5-pro"],
-  "gemini-2.5-flash": ["gemini 2.5 flash", "gemini-2.5-flash"],
-  "gemini-2.5-flash-lite": ["gemini 2.5 flash lite", "gemini-2.5-flash-lite"],
 };
 
 const EXCLUDED_MODEL_RE =
-  /embedding|imagen|veo|tts|audio|live|robotics|computer-use|aqa|learnlm|vision-only|nano/i;
+  /embedding|imagen|-image|image-generation|veo|tts|audio|live|robotics|computer-use|aqa|learnlm|vision-only|nano/i;
 
 function scoreDiscoveredGeminiModel(id: string): number {
   const low = id.toLowerCase();
@@ -283,12 +279,9 @@ async function buildOrderAttachmentParts(
       if (!SUPPORTED_INLINE_MIMES.has(meta.mimeType)) return [];
 
       if (buf.length > 2 * 1024 * 1024) {
-        const fileUri = await uploadToGeminiFilesApi(
-          apiKey,
-          buf,
-          meta.mimeType,
-          meta.originalName
-        );
+        const fileUri = apiKey.trim()
+          ? await uploadToGeminiFilesApi(apiKey, buf, meta.mimeType, meta.originalName)
+          : null;
         if (fileUri) {
           return [
             { text: label },
@@ -335,6 +328,249 @@ const FALLBACK_CONTINUE_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function hasAnyConfiguredAiProvider(): boolean {
+  return Boolean(
+    process.env.GEMINI_API_KEY?.trim() ||
+      process.env.GROQ_API_KEY?.trim() ||
+      process.env.OPENROUTER_API_KEY?.trim() ||
+      process.env.BACKUP_LLM_API_KEY?.trim()
+  );
+}
+
+interface BackupProviderConfig {
+  name: string;
+  endpoint: string;
+  apiKey: string;
+  models: string[];
+  extraHeaders?: Record<string, string>;
+}
+
+function getConfiguredBackupProviders(hasImages: boolean): BackupProviderConfig[] {
+  const providers: BackupProviderConfig[] = [];
+
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  if (groqKey) {
+    providers.push({
+      name: "groq",
+      endpoint: "https://api.groq.com/openai/v1/chat/completions",
+      apiKey: groqKey,
+      models: hasImages
+        ? [
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "llama-3.3-70b-versatile",
+            "qwen/qwen3-32b",
+          ]
+        : [
+            "llama-3.3-70b-versatile",
+            "meta-llama/llama-4-scout-17b-16e-instruct",
+            "qwen/qwen3-32b",
+          ],
+    });
+  }
+
+  const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (openRouterKey) {
+    providers.push({
+      name: "openrouter",
+      endpoint: "https://openrouter.ai/api/v1/chat/completions",
+      apiKey: openRouterKey,
+      models: [
+        "openrouter/free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "google/gemma-3-27b-it:free",
+        "deepseek/deepseek-r1-0528:free",
+      ],
+      extraHeaders: {
+        "HTTP-Referer": "https://acad-solver-web.vercel.app",
+        "X-Title": "Acad-Solver UFC",
+      },
+    });
+  }
+
+  const customKey = process.env.BACKUP_LLM_API_KEY?.trim();
+  const customBase = process.env.BACKUP_LLM_BASE_URL?.trim();
+  const customModel = process.env.BACKUP_LLM_MODEL?.trim();
+  if (customKey && customBase && customModel) {
+    const cleanBase = customBase.replace(/\/+$/, "");
+    providers.push({
+      name: "backup",
+      endpoint: cleanBase.endsWith("/chat/completions")
+        ? cleanBase
+        : `${cleanBase}/chat/completions`,
+      apiKey: customKey,
+      models: customModel
+        .split(",")
+        .map((m) => m.trim())
+        .filter(Boolean),
+    });
+  }
+
+  return providers;
+}
+
+function convertPartsForOpenAiCompatible(
+  userParts: Array<Record<string, unknown>>,
+  includeImages: boolean
+): { content: string | Array<Record<string, unknown>>; hasImages: boolean } {
+  const textChunks: string[] = [];
+  const imageDataUrls: string[] = [];
+  let pdfCount = 0;
+
+  for (const part of userParts) {
+    if (typeof part.text === "string" && part.text.trim()) {
+      textChunks.push(part.text);
+      continue;
+    }
+    const inline = part.inlineData as { mimeType?: string; data?: string } | undefined;
+    if (inline?.mimeType && inline?.data) {
+      if (inline.mimeType.startsWith("image/")) {
+        imageDataUrls.push(`data:${inline.mimeType};base64,${inline.data}`);
+      } else if (inline.mimeType === "application/pdf") {
+        pdfCount++;
+      }
+      continue;
+    }
+    if (part.fileData) {
+      pdfCount++;
+    }
+  }
+
+  if (pdfCount > 0) {
+    textChunks.push(
+      `[ملاحظة للنظام الاحتياطي: يوجد ${pdfCount} ملف PDF مرفق، اعتمد على النص والبيانات المتاحة أعلاه بأقصى دقة أكاديمية.]`
+    );
+  }
+
+  const combinedText = textChunks.join("\n\n").slice(0, 90_000);
+  if (includeImages && imageDataUrls.length > 0) {
+    return {
+      hasImages: true,
+      content: [
+        { type: "text", text: combinedText },
+        ...imageDataUrls.slice(0, 4).map((url) => ({
+          type: "image_url",
+          image_url: { url },
+        })),
+      ],
+    };
+  }
+
+  return { hasImages: imageDataUrls.length > 0, content: combinedText };
+}
+
+async function callBackupProvidersJson(params: {
+  systemText: string;
+  userParts: Array<Record<string, unknown>>;
+  temperature: number;
+  deadline: number;
+  perAttemptTimeoutMs: number;
+  attempts: string[];
+  fetchImpl: typeof fetch;
+}): Promise<{ parsed: RawGeminiJson; usedModel: string } | null> {
+  const {
+    systemText,
+    userParts,
+    temperature,
+    deadline,
+    perAttemptTimeoutMs,
+    attempts,
+    fetchImpl,
+  } = params;
+
+  const probe = convertPartsForOpenAiCompatible(userParts, false);
+  const providers = getConfiguredBackupProviders(probe.hasImages);
+  if (providers.length === 0) return null;
+
+  const strictJsonSystem = `${systemText}\n\nIMPORTANT: Return ONLY a single valid JSON object matching the exact schema requested. Do not wrap in markdown or add prose outside the JSON.`;
+
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 5_000) return null;
+
+      const supportsVision =
+        provider.name === "openrouter" ||
+        /vision|scout|maverick|gemma-3|gpt-4o|claude|gemini/i.test(model);
+
+      // Try once with images (if vision-capable) + json_object; if 400, retry text-only without response_format
+      const modes: Array<{ withImages: boolean; withJsonFormat: boolean }> =
+        supportsVision && probe.hasImages
+          ? [
+              { withImages: true, withJsonFormat: true },
+              { withImages: false, withJsonFormat: false },
+            ]
+          : [
+              { withImages: false, withJsonFormat: true },
+              { withImages: false, withJsonFormat: false },
+            ];
+
+      for (const mode of modes) {
+        const rem = deadline - Date.now();
+        if (rem <= 4_000) return null;
+
+        const converted = convertPartsForOpenAiCompatible(userParts, mode.withImages);
+        const body: Record<string, unknown> = {
+          model,
+          temperature,
+          max_tokens: 8192,
+          messages: [
+            { role: "system", content: strictJsonSystem },
+            { role: "user", content: converted.content },
+          ],
+        };
+        if (mode.withJsonFormat) {
+          body.response_format = { type: "json_object" };
+        }
+
+        let res: Response;
+        try {
+          res = await fetchImpl(provider.endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${provider.apiKey}`,
+              ...(provider.extraHeaders ?? {}),
+            },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(Math.min(perAttemptTimeoutMs, Math.max(5_000, rem - 1_500))),
+          });
+        } catch {
+          attempts.push(`${provider.name}/${model}:timeout`);
+          break;
+        }
+
+        if (!res.ok) {
+          attempts.push(`${provider.name}/${model}:${res.status}`);
+          // Only retry the simplified payload on 400 (unsupported json_object/vision param)
+          if (res.status === 400 && (mode.withJsonFormat || mode.withImages)) {
+            continue;
+          }
+          break;
+        }
+
+        try {
+          const data = (await res.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+          };
+          const rawText = data.choices?.[0]?.message?.content;
+          if (!rawText) {
+            attempts.push(`${provider.name}/${model}:empty`);
+            break;
+          }
+          const parsed = safeParseGeminiJson(rawText);
+          attempts.push(`${provider.name}/${model}:200`);
+          return { parsed, usedModel: `${provider.name}/${model}` };
+        } catch {
+          attempts.push(`${provider.name}/${model}:bad_json`);
+          break;
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 export async function callGeminiJsonWithFallback(params: {
@@ -386,6 +622,7 @@ export async function callGeminiJsonWithFallback(params: {
   let discoveredOnce = false;
   let lastStatus = 500;
   let lastErrorText = "";
+  let geminiFatal = false;
 
   const tryModelOnce = async (
     modelName: string
@@ -470,63 +707,91 @@ export async function callGeminiJsonWithFallback(params: {
     }
   };
 
-  // Pass 1: Walk quality-first chain + dynamically discover any other live Gemini models on 404/503/429
-  for (let i = 0; i < candidateModels.length; i++) {
-    const modelName = candidateModels[i];
-    const res = await tryModelOnce(modelName);
-    if (res.ok) {
-      return { parsed: res.parsed, usedModel: res.usedModel, attempts };
-    }
-
-    lastStatus = res.status;
-    lastErrorText = res.errorText;
-
-    if (res.transient && !transientCandidates.includes(modelName)) {
-      transientCandidates.push(modelName);
-    }
-
-    if (res.fatal) {
-      break;
-    }
-
-    // Trigger live model discovery from /v1beta/models once whenever a model 404s OR
-    // once our first 2 primary candidates fail with 503/429.
-    // Prioritize LIVE discovered models immediately next and prune unvisited non-existent aliases!
-    if (!discoveredOnce && (res.status === 404 || i >= 1)) {
-      discoveredOnce = true;
-      const discovered = await discoverExactModelIds(
-        apiKey,
-        [firstChoice, ...DEFAULT_MODEL_PRIORITY],
-        fetchImpl
-      );
-      if (discovered.length > 0) {
-        const triedSet = new Set(candidateModels.slice(0, i + 1));
-        const liveNext = discovered.filter((id) => !triedSet.has(id));
-        candidateModels.splice(i + 1, candidateModels.length - (i + 1), ...liveNext);
-      }
-    }
-  }
-
-  // Pass 2: Resilience retry wave with backoff for transient 503/5xx spikes
-  // Google explicitly notes 503 demand spikes are usually temporary (clear within seconds).
-  if (transientCandidates.length > 0 && deadline - Date.now() > 15_000) {
-    await sleepImpl(2_500);
-    for (const modelName of transientCandidates.slice(0, 4)) {
-      if (deadline - Date.now() <= 5_000) break;
+  if (apiKey.trim()) {
+    // Pass 1: Walk quality-first chain + dynamically discover any other live Gemini models on 404/503/429
+    for (let i = 0; i < candidateModels.length; i++) {
+      const modelName = candidateModels[i];
       const res = await tryModelOnce(modelName);
       if (res.ok) {
         return { parsed: res.parsed, usedModel: res.usedModel, attempts };
       }
+
       lastStatus = res.status;
       lastErrorText = res.errorText;
-      if (res.fatal) break;
-      await sleepImpl(1_500);
+
+      if (res.transient && !transientCandidates.includes(modelName)) {
+        transientCandidates.push(modelName);
+      }
+
+      if (res.fatal) {
+        geminiFatal = true;
+        break;
+      }
+
+      // Trigger live model discovery from /v1beta/models once whenever a model 404s OR
+      // once our first 2 primary candidates fail with 503/429.
+      // Prioritize LIVE discovered models immediately next and prune unvisited non-existent aliases!
+      if (!discoveredOnce && (res.status === 404 || i >= 1)) {
+        discoveredOnce = true;
+        const discovered = await discoverExactModelIds(
+          apiKey,
+          [firstChoice, ...DEFAULT_MODEL_PRIORITY],
+          fetchImpl
+        );
+        if (discovered.length > 0) {
+          const triedSet = new Set(candidateModels.slice(0, i + 1));
+          const liveNext = discovered.filter((id) => !triedSet.has(id));
+          candidateModels.splice(i + 1, candidateModels.length - (i + 1), ...liveNext);
+        }
+      }
+    }
+
+    // Pass 2: Resilience retry wave with backoff for transient 503/5xx spikes
+    if (!geminiFatal && transientCandidates.length > 0 && deadline - Date.now() > 15_000) {
+      await sleepImpl(2_500);
+      for (const modelName of transientCandidates.slice(0, 3)) {
+        if (deadline - Date.now() <= 5_000) break;
+        const res = await tryModelOnce(modelName);
+        if (res.ok) {
+          return { parsed: res.parsed, usedModel: res.usedModel, attempts };
+        }
+        lastStatus = res.status;
+        lastErrorText = res.errorText;
+        if (res.fatal) break;
+        await sleepImpl(1_500);
+      }
     }
   }
 
-  const summary = attempts.slice(0, 12).join(" ← ");
+  // Pass 3: Zero-dollar Multi-Provider Automatic Failover (Groq -> OpenRouter -> Custom Backup)
+  // Triggered whenever ALL Gemini models are overloaded (503/429) or GEMINI_API_KEY is not set!
+  if (!geminiFatal || !apiKey.trim()) {
+    const backup = await callBackupProvidersJson({
+      systemText,
+      userParts,
+      temperature,
+      deadline,
+      perAttemptTimeoutMs,
+      attempts,
+      fetchImpl,
+    });
+    if (backup) {
+      return { parsed: backup.parsed, usedModel: backup.usedModel, attempts };
+    }
+  }
+
+  const summary = attempts.slice(0, 14).join(" ← ");
+  const hasBackupConfigured = Boolean(
+    process.env.GROQ_API_KEY?.trim() ||
+      process.env.OPENROUTER_API_KEY?.trim() ||
+      process.env.BACKUP_LLM_API_KEY?.trim()
+  );
+  const hint =
+    lastStatus === 503 && !hasBackupConfigured
+      ? " (ملاحظة: جميع نماذج Gemini المجانية تشهد ذروة ضغط مؤقتة من خوادم Google حالياً — أضف مفتاح GROQ_API_KEY أو OPENROUTER_API_KEY المجاني في Vercel للتبديل الفوري دون توقف)."
+      : "";
   throw new Error(
-    `فشل الاتصال بـ Gemini API (${lastStatus}) بعد تجربة [${summary}]: ${lastErrorText.slice(0, 260)}`
+    `فشل الاتصال بـ Gemini API (${lastStatus}) بعد تجربة [${summary}]: ${lastErrorText.slice(0, 220)}${hint}`
   );
 }
 
@@ -619,6 +884,7 @@ function repairJsonEscapes(input: string): string {
 
 function safeParseGeminiJson(rawText: string): RawGeminiJson {
   let cleaned = rawText
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .trim()
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
@@ -742,10 +1008,10 @@ export async function generateSolutionWithGemini(
   order: StudentOrder,
   options: GenerateOptions = {}
 ): Promise<{ solution: SolutionDocument; usedModel: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const apiKey = process.env.GEMINI_API_KEY?.trim() ?? "";
+  if (!hasAnyConfiguredAiProvider()) {
     throw new Error(
-      "لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة. يرجى إضافته لتفعيل التوليد الآلي بالذكاء الاصطناعي."
+      "لم يتم ضبط مفتاح GEMINI_API_KEY (أو GROQ_API_KEY / OPENROUTER_API_KEY) في إعدادات البيئة."
     );
   }
 
@@ -900,9 +1166,9 @@ export async function refineSolutionWithGemini(
   order: StudentOrder,
   options: RefineOptions
 ): Promise<{ solution: SolutionDocument; usedModel: string; auditNotes: string[] }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة.");
+  const apiKey = process.env.GEMINI_API_KEY?.trim() ?? "";
+  if (!hasAnyConfiguredAiProvider()) {
+    throw new Error("لم يتم ضبط مفتاح الذكاء الاصطناعي في إعدادات البيئة.");
   }
   if (!order.solution) {
     throw new Error("لا توجد مسودة حل حالية لتدقيقها أو تحسينها.");
@@ -1083,9 +1349,9 @@ export async function generateFromBlueprintWithGemini(
   blueprint: SolutionDocument,
   options: GenerateOptions = {}
 ): Promise<{ solution: SolutionDocument; usedModel: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("لم يتم ضبط مفتاح GEMINI_API_KEY في إعدادات البيئة.");
+  const apiKey = process.env.GEMINI_API_KEY?.trim() ?? "";
+  if (!hasAnyConfiguredAiProvider()) {
+    throw new Error("لم يتم ضبط مفتاح الذكاء الاصطناعي في إعدادات البيئة.");
   }
 
   const auto = pickAutoStyleAndTheme(`${order.id}-${order.trackingCode}`);

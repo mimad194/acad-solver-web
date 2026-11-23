@@ -221,4 +221,132 @@ describe("Gemini API Resilience & Multi-Model Fallback Engine", () => {
     // Must stop immediately on 403 without looping through other models
     assert.equal(called.length, 1);
   });
+
+  it("excludes -image models during discovery and automatically fails over to free Groq when all Gemini models return 503", async () => {
+    const prevGroq = process.env.GROQ_API_KEY;
+    const prevOr = process.env.OPENROUTER_API_KEY;
+    process.env.GROQ_API_KEY = "gsk_test_free_key";
+    delete process.env.OPENROUTER_API_KEY;
+
+    const calledUrls: string[] = [];
+    try {
+      const mockFetch: typeof fetch = async (input, init) => {
+        const url = String(input);
+        calledUrls.push(url);
+
+        if (url.includes("/v1beta/models?")) {
+          return jsonResponse({
+            models: [
+              { name: "models/gemini-4-hydrogen", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/gemini-3.8-flash", supportedGenerationMethods: ["generateContent"] },
+              { name: "models/gemini-3.1-flash-lite-image", supportedGenerationMethods: ["generateContent"] },
+            ],
+          });
+        }
+        if (url.includes("generativelanguage.googleapis.com")) {
+          return jsonResponse({ error: { code: 503, status: "UNAVAILABLE" } }, 503);
+        }
+        if (url === "https://api.groq.com/openai/v1/chat/completions") {
+          const parsedBody = JSON.parse(String(init?.body ?? "{}"));
+          assert.equal(parsedBody.model, "llama-3.3-70b-versatile");
+          return jsonResponse({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    title: "نجح التحويل التلقائي إلى Groq المجاني",
+                    blocks: [{ type: "paragraph", text: "تم الحل بنجاح" }],
+                  }),
+                },
+              },
+            ],
+          });
+        }
+        return jsonResponse({ error: "unexpected" }, 500);
+      };
+
+      const res = await callGeminiJsonWithFallback({
+        apiKey: "test-gemini-key",
+        systemText: "sys",
+        userParts: [{ text: "حل التمرين التالي" }],
+        preferredModel: "gemini-4-hydrogen",
+        fetchImpl: mockFetch,
+        sleepImpl: instantSleep,
+      });
+
+      assert.equal(res.usedModel, "groq/llama-3.3-70b-versatile");
+      assert.equal(res.parsed.title, "نجح التحويل التلقائي إلى Groq المجاني");
+      assert.equal(
+        calledUrls.some((u) => u.includes("gemini-3.1-flash-lite-image")),
+        false
+      );
+    } finally {
+      if (prevGroq === undefined) delete process.env.GROQ_API_KEY;
+      else process.env.GROQ_API_KEY = prevGroq;
+      if (prevOr === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = prevOr;
+    }
+  });
+
+  it("fails over from Gemini (503) -> Groq (429) -> OpenRouter free and strips <think> tags cleanly", async () => {
+    const prevGroq = process.env.GROQ_API_KEY;
+    const prevOr = process.env.OPENROUTER_API_KEY;
+    process.env.GROQ_API_KEY = "gsk_test_free_key";
+    process.env.OPENROUTER_API_KEY = "sk-or-test_free_key";
+
+    try {
+      const mockFetch: typeof fetch = async (input) => {
+        const url = String(input);
+        if (url.includes("/v1beta/models?")) {
+          return jsonResponse({
+            models: [{ name: "models/gemini-4-hydrogen", supportedGenerationMethods: ["generateContent"] }],
+          });
+        }
+        if (url.includes("generativelanguage.googleapis.com")) {
+          return jsonResponse({ error: { code: 503, status: "UNAVAILABLE" } }, 503);
+        }
+        if (url.includes("api.groq.com")) {
+          return jsonResponse({ error: { message: "rate limit" } }, 429);
+        }
+        if (url.includes("openrouter.ai")) {
+          return jsonResponse({
+            choices: [
+              {
+                message: {
+                  content:
+                    "<think>internal chain of thought</think>\n```json\n" +
+                    JSON.stringify({
+                      title: "نجح عبر OpenRouter المجاني",
+                      blocks: [{ type: "paragraph", text: "نتيجة سليمة" }],
+                    }) +
+                    "\n```",
+                },
+              },
+            ],
+          });
+        }
+        return jsonResponse({ error: "unexpected" }, 500);
+      };
+
+      const res = await callGeminiJsonWithFallback({
+        apiKey: "test-gemini-key",
+        systemText: "sys",
+        userParts: [
+          { text: "حل السؤال من الصورة" },
+          { inlineData: { mimeType: "image/png", data: "iVBORw0KGgo=" } },
+        ],
+        preferredModel: "gemini-4-hydrogen",
+        fetchImpl: mockFetch,
+        sleepImpl: instantSleep,
+      });
+
+      assert.equal(res.usedModel, "openrouter/openrouter/free");
+      assert.equal(res.parsed.title, "نجح عبر OpenRouter المجاني");
+    } finally {
+      if (prevGroq === undefined) delete process.env.GROQ_API_KEY;
+      else process.env.GROQ_API_KEY = prevGroq;
+      if (prevOr === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = prevOr;
+    }
+  });
 });
