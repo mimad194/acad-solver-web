@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getOrderById } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
 import { generateRtlDocxBuffer } from "@/lib/docx-generator";
-import { isOrderPaymentUnlocked } from "@/lib/pricing-config";
+import { isOrderPaymentUnlockedAsync } from "@/lib/pricing-config";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export async function GET(
     return NextResponse.json({ error: "غير مصرح بتحميل هذا الملف حاليا." }, { status: 403 });
   }
 
-  if (!isAdmin && !isOrderPaymentUnlocked(order)) {
+  if (!isAdmin && !(await isOrderPaymentUnlockedAsync(order))) {
     return NextResponse.json(
       { error: "يرجى إتمام الدفع وتأكيد الوصل لفتح تحميل ملف Word (.docx)." },
       { status: 402 }

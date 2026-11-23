@@ -11,10 +11,18 @@ import {
   Lock,
   LogOut,
   RefreshCw,
+  Save,
   Search,
+  Settings,
   Trash2,
+  X,
 } from "lucide-react";
-import { OrderStatus, PaymentStatus, StudentOrder } from "@/types/order";
+import {
+  OrderStatus,
+  PaymentStatus,
+  PublicAppConfig,
+  StudentOrder,
+} from "@/types/order";
 
 const STATUS_META: Record<OrderStatus, { label: string; cls: string }> = {
   pending: { label: "قيد الانتظار", cls: "bg-amber-100 text-amber-800" },
@@ -39,10 +47,27 @@ export default function AdminDashboardPage() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [query, setQuery] = useState("");
 
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsConfig, setSettingsConfig] = useState<PublicAppConfig | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsMsg, setSettingsMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/settings", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { config?: PublicAppConfig };
+        if (data.config) setSettingsConfig(data.config);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
   const loadOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/orders");
+      const res = await fetch("/api/orders", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setOrders(data.orders ?? []);
@@ -58,10 +83,53 @@ export default function AdminDashboardPage() {
       .then((d) => {
         setAuthenticated(Boolean(d.authenticated));
         setAuthChecked(true);
-        if (d.authenticated) loadOrders();
+        if (d.authenticated) {
+          void loadOrders();
+          void loadSettings();
+        }
       })
       .catch(() => setAuthChecked(true));
-  }, [loadOrders]);
+  }, [loadOrders, loadSettings]);
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!settingsConfig) return;
+    setSavingSettings(true);
+    setSettingsMsg(null);
+    try {
+      const res = await fetch("/api/admin/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currency: settingsConfig.currency,
+          previewLockEnabled: settingsConfig.previewLockEnabled,
+          supportWhatsapp: settingsConfig.supportWhatsapp,
+          payment: settingsConfig.payment,
+          packages: settingsConfig.packages.map((p) => ({
+            id: p.id,
+            name: p.name,
+            subtitle: p.subtitle,
+            badge: p.badge ?? "",
+            priceDzd: p.priceDzd,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "فشل حفظ الإعدادات.");
+      if (data.config) setSettingsConfig(data.config);
+      setSettingsMsg({
+        type: "ok",
+        text: "تم حفظ الأسعار والباقات وبيانات الدفع بنجاح! أصبحت مفعّلة فورا في الصفحة الرئيسية وصفحة التتبع.",
+      });
+    } catch (err) {
+      setSettingsMsg({
+        type: "err",
+        text: err instanceof Error ? err.message : "حدث خطأ أثناء الحفظ.",
+      });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +147,7 @@ export default function AdminDashboardPage() {
     setAuthenticated(true);
     setPassword("");
     loadOrders();
+    loadSettings();
   };
 
   const handleLogout = async () => {
@@ -191,7 +260,22 @@ export default function AdminDashboardPage() {
             راجع طلبات الطلبة الواردة، أكّد وصولات BaridiMob، ولّد الحل وفق المراجع المرفقة واعتمد تسليمه.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setShowSettings((prev) => !prev);
+              if (!settingsConfig) void loadSettings();
+            }}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-colors ${
+              showSettings
+                ? "bg-navy-700 text-white"
+                : "bg-navy-50 border border-navy-200 text-navy-800 hover:bg-navy-100"
+            }`}
+          >
+            <Settings className="w-3.5 h-3.5" />
+            إعدادات الأسعار والباقات والدفع
+          </button>
           <button
             type="button"
             onClick={loadOrders}
@@ -210,6 +294,230 @@ export default function AdminDashboardPage() {
           </button>
         </div>
       </div>
+
+      {/* Live Pricing, Packages & Payment Settings Panel */}
+      {showSettings && settingsConfig && (
+        <form
+          onSubmit={handleSaveSettings}
+          className="bg-white border-2 border-navy-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5"
+        >
+          <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-extrabold text-navy-800 flex items-center gap-2">
+                <Settings className="w-4 h-4 text-navy-600" />
+                تخصيص أسعار الباقات وبيانات الدفع (تُطبَّق فورا على الموقع)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                أي تعديل تحفظه هنا ينعكس مباشرة في الصفحة الرئيسية وصفحة التتبع دون الحاجة لتعديل Vercel أو إعادة النشر.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSettings(false)}
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
+              title="إغلاق"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {settingsMsg && (
+            <div
+              className={`p-3 rounded-xl text-xs font-bold border ${
+                settingsMsg.type === "ok"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-red-50 border-red-200 text-red-700"
+              }`}
+            >
+              {settingsMsg.text}
+            </div>
+          )}
+
+          {/* 3 Packages Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {settingsConfig.packages.map((pkg, idx) => (
+              <div
+                key={pkg.id}
+                className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-navy-100 text-navy-800">
+                    {pkg.id}
+                  </span>
+                  <span className="text-xs font-extrabold text-emerald-700">
+                    {pkg.priceDzd.toLocaleString("fr-DZ")} {settingsConfig.currency}
+                  </span>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    اسم الباقة
+                  </label>
+                  <input
+                    type="text"
+                    value={pkg.name}
+                    onChange={(e) => {
+                      const next = [...settingsConfig.packages];
+                      next[idx] = { ...pkg, name: e.target.value };
+                      setSettingsConfig({ ...settingsConfig, packages: next });
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      السعر ({settingsConfig.currency})
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={pkg.priceDzd}
+                      onChange={(e) => {
+                        const next = [...settingsConfig.packages];
+                        next[idx] = { ...pkg, priceDzd: Math.max(0, Number(e.target.value) || 0) };
+                        setSettingsConfig({ ...settingsConfig, packages: next });
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-extrabold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      شارة (اختياري)
+                    </label>
+                    <input
+                      type="text"
+                      value={pkg.badge ?? ""}
+                      onChange={(e) => {
+                        const next = [...settingsConfig.packages];
+                        next[idx] = { ...pkg, badge: e.target.value };
+                        setSettingsConfig({ ...settingsConfig, packages: next });
+                      }}
+                      placeholder="الأكثر طلبا"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                    وصف مختصر
+                  </label>
+                  <input
+                    type="text"
+                    value={pkg.subtitle}
+                    onChange={(e) => {
+                      const next = [...settingsConfig.packages];
+                      next[idx] = { ...pkg, subtitle: e.target.value };
+                      setSettingsConfig({ ...settingsConfig, packages: next });
+                    }}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Payment & Support Settings */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                رقم RIP (BaridiMob)
+              </label>
+              <input
+                type="text"
+                dir="ltr"
+                value={settingsConfig.payment.baridimobRip}
+                onChange={(e) =>
+                  setSettingsConfig({
+                    ...settingsConfig,
+                    payment: { ...settingsConfig.payment, baridimobRip: e.target.value },
+                  })
+                }
+                placeholder="0079999900..."
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                حساب CCP والمفتاح (اختياري)
+              </label>
+              <input
+                type="text"
+                dir="ltr"
+                value={settingsConfig.payment.ccpAccount}
+                onChange={(e) =>
+                  setSettingsConfig({
+                    ...settingsConfig,
+                    payment: { ...settingsConfig.payment, ccpAccount: e.target.value },
+                  })
+                }
+                placeholder="12345678 / 99"
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                اسم صاحب الحساب
+              </label>
+              <input
+                type="text"
+                value={settingsConfig.payment.accountName}
+                onChange={(e) =>
+                  setSettingsConfig({
+                    ...settingsConfig,
+                    payment: { ...settingsConfig.payment, accountName: e.target.value },
+                  })
+                }
+                placeholder="الاسم واللقب"
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                واتساب الدعم (بدون + مثل 21355...)
+              </label>
+              <input
+                type="text"
+                dir="ltr"
+                value={settingsConfig.supportWhatsapp}
+                onChange={(e) =>
+                  setSettingsConfig({
+                    ...settingsConfig,
+                    supportWhatsapp: e.target.value,
+                  })
+                }
+                placeholder="213555000000"
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 text-xs font-mono"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
+            <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settingsConfig.previewLockEnabled}
+                onChange={(e) =>
+                  setSettingsConfig({
+                    ...settingsConfig,
+                    previewLockEnabled: e.target.checked,
+                  })
+                }
+                className="w-4 h-4 accent-navy-700"
+              />
+              تفعيل قفل المعاينة الجزئية قبل تأكيد الدفع (أوقفها للفترات المجانية)
+            </label>
+
+            <button
+              type="submit"
+              disabled={savingSettings}
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+            >
+              <Save className="w-4 h-4" />
+              {savingSettings ? "جاري الحفظ..." : "حفظ الإعدادات وتطبيقها فورا"}
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">

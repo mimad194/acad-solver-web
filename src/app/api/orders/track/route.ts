@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getOrderByTrackingCode } from "@/lib/store";
-import { getPublicAppConfig, isOrderPaymentUnlocked } from "@/lib/pricing-config";
+import {
+  getPublicAppConfigAsync,
+  isOrderPaymentUnlockedAsync,
+} from "@/lib/pricing-config";
 import type { SolutionDocument } from "@/types/order";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +22,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "لم يتم العثور على طلب بهذا الرمز." }, { status: 404 });
   }
 
-  const config = getPublicAppConfig();
+  const config = await getPublicAppConfigAsync();
   const isCompleted = order.status === "completed" && order.solution !== null;
-  const isPaymentUnlocked = isOrderPaymentUnlocked(order);
+  const isPaymentUnlocked = await isOrderPaymentUnlockedAsync(order);
 
   let exposedSolution: SolutionDocument | null = null;
   const totalBlocksCount = order.solution?.blocks.length ?? 0;

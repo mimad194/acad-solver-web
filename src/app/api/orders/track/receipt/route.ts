@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getOrderByTrackingCode, saveUploadedFile, updateOrder } from "@/lib/store";
-import { getPublicAppConfig } from "@/lib/pricing-config";
+import { getPublicAppConfigAsync } from "@/lib/pricing-config";
 import { sendTelegramAlert } from "@/lib/notify";
 import type { PaymentReceiptMeta } from "@/types/order";
 
@@ -82,7 +82,7 @@ export async function POST(req: Request) {
           : "receipt_submitted",
     }));
 
-    const cfg = getPublicAppConfig();
+    const cfg = await getPublicAppConfigAsync();
     const origin = new URL(req.url).origin;
     void sendTelegramAlert(
       `💳 تم رفع وصل دفع جديد!\n` +

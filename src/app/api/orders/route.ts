@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { createOrder, listOrders, saveUploadedFile } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
-import { getPublicAppConfig, resolvePackagePrice } from "@/lib/pricing-config";
+import {
+  getPublicAppConfigAsync,
+  resolvePackagePriceAsync,
+} from "@/lib/pricing-config";
 import { sendTelegramAlert } from "@/lib/notify";
 import { findCourseLibraryEntry } from "@/lib/course-library";
 import { findCatalogSpecialty, formatSpecialtyDisplay } from "@/lib/ufc-catalog";
@@ -174,8 +177,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const pkg = resolvePackagePrice(requestedPackageId);
-    const cfg = getPublicAppConfig();
+    const pkg = await resolvePackagePriceAsync(requestedPackageId);
+    const cfg = await getPublicAppConfigAsync();
 
     const order = await createOrder({
       studentName,

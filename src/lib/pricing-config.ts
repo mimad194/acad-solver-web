@@ -1,9 +1,23 @@
+import fs from "fs/promises";
+import path from "path";
 import type { PackageId, PricingPackage, PublicAppConfig } from "@/types/order";
+import { getFirestoreDb } from "./firebase-admin";
+
+const SETTINGS_COLLECTION = "app_settings";
+const SETTINGS_DOC_ID = "commercial";
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback;
   const n = Number(raw.trim());
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
+}
+
+function getLocalSettingsPath(): string {
+  const dir =
+    process.env.VERCEL || process.env.NETLIFY
+      ? path.join("/tmp", "acad-solver-data")
+      : path.join(process.cwd(), ".data");
+  return path.join(dir, "commercial-settings.json");
 }
 
 function buildDefaultPackages(): PricingPackage[] {
@@ -60,7 +74,7 @@ function buildDefaultPackages(): PricingPackage[] {
   ];
 }
 
-export function getPublicAppConfig(): PublicAppConfig {
+export function getEnvAppConfig(): PublicAppConfig {
   const currency = process.env.PRICE_CURRENCY?.trim() || "دج";
   const cohortMaxSlots = parsePositiveInt(process.env.COHORT_MAX_SLOTS, 8);
   const previewLockEnabled =
@@ -77,7 +91,7 @@ export function getPublicAppConfig(): PublicAppConfig {
         );
       }
     } catch {
-      // Ignore malformed custom JSON and keep defaults
+      // Ignore malformed custom JSON
     }
   }
 
@@ -95,12 +109,118 @@ export function getPublicAppConfig(): PublicAppConfig {
   };
 }
 
-export function resolvePackagePrice(packageId?: PackageId): {
+export interface StoredCommercialOverrides {
+  currency?: string;
+  previewLockEnabled?: boolean;
+  supportWhatsapp?: string;
+  payment?: {
+    baridimobRip?: string;
+    ccpAccount?: string;
+    accountName?: string;
+  };
+  packages?: Array<{
+    id: PackageId;
+    name?: string;
+    subtitle?: string;
+    badge?: string;
+    priceDzd?: number;
+  }>;
+  updatedAt?: string;
+}
+
+async function readStoredOverrides(): Promise<StoredCommercialOverrides | null> {
+  const db = getFirestoreDb();
+  if (db) {
+    try {
+      const snap = await db.collection(SETTINGS_COLLECTION).doc(SETTINGS_DOC_ID).get();
+      return snap.exists ? (snap.data() as StoredCommercialOverrides) : null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const raw = await fs.readFile(getLocalSettingsPath(), "utf-8");
+    return JSON.parse(raw) as StoredCommercialOverrides;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveCommercialOverrides(
+  overrides: StoredCommercialOverrides
+): Promise<PublicAppConfig> {
+  const payload: StoredCommercialOverrides = {
+    ...overrides,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const db = getFirestoreDb();
+  if (db) {
+    await db.collection(SETTINGS_COLLECTION).doc(SETTINGS_DOC_ID).set(payload);
+  } else {
+    const p = getLocalSettingsPath();
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify(payload, null, 2), "utf-8");
+  }
+
+  return getPublicAppConfigAsync();
+}
+
+export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
+  const base = getEnvAppConfig();
+  const ov = await readStoredOverrides();
+  if (!ov) return base;
+
+  const mergedPackages = base.packages.map((pkg) => {
+    const patch = ov.packages?.find((p) => p.id === pkg.id);
+    if (!patch) return pkg;
+    return {
+      ...pkg,
+      name: patch.name?.trim() || pkg.name,
+      subtitle: patch.subtitle?.trim() || pkg.subtitle,
+      badge: patch.badge !== undefined ? patch.badge.trim() || undefined : pkg.badge,
+      priceDzd:
+        typeof patch.priceDzd === "number" && Number.isFinite(patch.priceDzd) && patch.priceDzd >= 0
+          ? Math.round(patch.priceDzd)
+          : pkg.priceDzd,
+    };
+  });
+
+  return {
+    currency: ov.currency?.trim() || base.currency,
+    cohortMaxSlots: base.cohortMaxSlots,
+    previewLockEnabled:
+      typeof ov.previewLockEnabled === "boolean"
+        ? ov.previewLockEnabled
+        : base.previewLockEnabled,
+    payment: {
+      baridimobRip:
+        ov.payment?.baridimobRip !== undefined
+          ? ov.payment.baridimobRip.trim()
+          : base.payment.baridimobRip,
+      ccpAccount:
+        ov.payment?.ccpAccount !== undefined
+          ? ov.payment.ccpAccount.trim()
+          : base.payment.ccpAccount,
+      accountName:
+        ov.payment?.accountName !== undefined
+          ? ov.payment.accountName.trim()
+          : base.payment.accountName,
+    },
+    supportWhatsapp:
+      ov.supportWhatsapp !== undefined
+        ? ov.supportWhatsapp.replace(/[^\d]/g, "")
+        : base.supportWhatsapp,
+    packages: mergedPackages,
+  };
+}
+
+export async function resolvePackagePriceAsync(packageId?: PackageId): Promise<{
   packageId: PackageId;
   priceDzd: number;
   packageName: string;
-} {
-  const cfg = getPublicAppConfig();
+}> {
+  const cfg = await getPublicAppConfigAsync();
   const matched =
     cfg.packages.find((p) => p.id === packageId) ??
     cfg.packages.find((p) => p.id === "premium") ??
@@ -112,12 +232,14 @@ export function resolvePackagePrice(packageId?: PackageId): {
   };
 }
 
-export function isOrderPaymentUnlocked(order: {
+export async function isOrderPaymentUnlockedAsync(order: {
   paymentStatus?: string;
-}): boolean {
-  const cfg = getPublicAppConfig();
+}): Promise<boolean> {
+  const cfg = await getPublicAppConfigAsync();
   if (!cfg.previewLockEnabled) return true;
-  // Backward compatibility: legacy orders created before paymentStatus existed stay unlocked
   if (!order.paymentStatus) return true;
   return order.paymentStatus === "paid" || order.paymentStatus === "waived";
 }
+
+// Keep sync exports for any backward-compatible callers
+export const getPublicAppConfig = getEnvAppConfig;
