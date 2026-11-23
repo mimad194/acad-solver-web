@@ -5,6 +5,7 @@ import { del, list, put } from "@vercel/blob";
 import { StudentOrder, UploadedFileMeta } from "@/types/order";
 import { buildDemoSeedOrder } from "./sample-seed";
 import { getFirestoreDb } from "./firebase-admin";
+import { listCourseLibrary } from "./course-library";
 
 const ORDERS_COLLECTION = "orders";
 const BLOB_ORDERS_PREFIX = "acad-solver/orders/";
@@ -342,6 +343,19 @@ export async function updateOrder(
 }
 
 export async function deleteOrder(id: string): Promise<boolean> {
+  // Never delete Blob URLs that are archived inside the Shared Course Library!
+  const protectedUrls = new Set<string>();
+  try {
+    const libEntries = await listCourseLibrary();
+    for (const entry of libEntries) {
+      for (const rf of entry.referenceFiles) {
+        if (rf.blobUrl) protectedUrls.add(rf.blobUrl);
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
   const db = getFirestoreDb();
   if (db) {
     const ref = db.collection(ORDERS_COLLECTION).doc(id);
@@ -349,7 +363,9 @@ export async function deleteOrder(id: string): Promise<boolean> {
     if (!snap.exists) return false;
     const target = snap.data() as StudentOrder;
     if (useVercelBlob()) {
-      const urls = target.files.map((f) => f.blobUrl).filter((u): u is string => Boolean(u));
+      const urls = target.files
+        .map((f) => f.blobUrl)
+        .filter((u): u is string => Boolean(u) && !protectedUrls.has(u!));
       if (urls.length > 0) {
         await del(urls, { token: resolveBlobToken() }).catch(() => {});
       }
@@ -365,7 +381,7 @@ export async function deleteOrder(id: string): Promise<boolean> {
   if (useVercelBlob()) {
     const urlsToDelete: string[] = [];
     for (const f of target.files) {
-      if (f.blobUrl) urlsToDelete.push(f.blobUrl);
+      if (f.blobUrl && !protectedUrls.has(f.blobUrl)) urlsToDelete.push(f.blobUrl);
     }
     const { blobs } = await list({ prefix: `${BLOB_ORDERS_PREFIX}${id}.json`, token: resolveBlobToken() });
     for (const b of blobs) urlsToDelete.push(b.url);
