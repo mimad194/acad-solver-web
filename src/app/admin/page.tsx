@@ -192,6 +192,7 @@ export default function AdminDashboardPage() {
         body: JSON.stringify({
           currency: settingsConfig.currency,
           previewLockEnabled: settingsConfig.previewLockEnabled,
+          semesterPassExpiresAt: settingsConfig.semesterPassExpiresAt ?? "",
           supportWhatsapp: settingsConfig.supportWhatsapp,
           referral: settingsConfig.referral,
           payment: settingsConfig.payment,
@@ -201,6 +202,7 @@ export default function AdminDashboardPage() {
             subtitle: p.subtitle,
             badge: p.badge ?? "",
             priceDzd: p.priceDzd,
+            creditsCount: p.creditsCount ?? (p.id === "semester" ? 17 : p.id === "premium" ? 3 : 1),
             features: p.features
               .map((f) => f.trim())
               .filter(Boolean),
@@ -472,7 +474,7 @@ export default function AdminDashboardPage() {
                     className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 mb-1">
                       السعر ({settingsConfig.currency})
@@ -486,7 +488,27 @@ export default function AdminDashboardPage() {
                         next[idx] = { ...pkg, priceDzd: Math.max(0, Number(e.target.value) || 0) };
                         setSettingsConfig({ ...settingsConfig, packages: next });
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-extrabold"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-extrabold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      الأنشطة (Credits)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={pkg.creditsCount ?? (pkg.id === "semester" ? 17 : pkg.id === "premium" ? 3 : 1)}
+                      onChange={(e) => {
+                        const next = [...settingsConfig.packages];
+                        next[idx] = {
+                          ...pkg,
+                          creditsCount: Math.max(1, Number(e.target.value) || 1),
+                        };
+                        setSettingsConfig({ ...settingsConfig, packages: next });
+                      }}
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
                     />
                   </div>
                   <div>
@@ -501,8 +523,8 @@ export default function AdminDashboardPage() {
                         next[idx] = { ...pkg, badge: e.target.value };
                         setSettingsConfig({ ...settingsConfig, packages: next });
                       }}
-                      placeholder="الأكثر طلبا"
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs"
+                      placeholder="الأوفر"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 bg-white text-xs"
                     />
                   </div>
                 </div>
@@ -647,10 +669,27 @@ export default function AdminDashboardPage() {
                 تفعيل نظام الإحالات
               </label>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                  عدد الإحالات المدفوعة المطلوب لنشاط مجاني 100%
+                  تاريخ انتهاء رصيد السداسي (قبل الامتحانات)
+                </label>
+                <input
+                  type="date"
+                  dir="ltr"
+                  value={settingsConfig.semesterPassExpiresAt ?? ""}
+                  onChange={(e) =>
+                    setSettingsConfig({
+                      ...settingsConfig,
+                      semesterPassExpiresAt: e.target.value,
+                    })
+                  }
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  عدد الإحالات المدفوعة لنشاط واحد مجاني 100%
                 </label>
                 <input
                   type="number"
@@ -717,17 +756,57 @@ export default function AdminDashboardPage() {
                 }
                 className="w-4 h-4 accent-navy-700"
               />
-              تفعيل قفل المعاينة الجزئية قبل تأكيد الدفع (أوقفها للفترات المجانية)
+              تفعيل قفل المعاينة الجزئية قبل تأكيد الدفع
             </label>
 
-            <button
-              type="submit"
-              disabled={savingSettings}
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
-            >
-              <Save className="w-4 h-4" />
-              {savingSettings ? "جاري الحفظ..." : "حفظ الإعدادات وتطبيقها فورا"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={savingSettings}
+                onClick={async () => {
+                  if (!confirm("تطبيق الباقات الحجمية الجديدة (نشاط واحد 250 دج / 3 أنشطة 650 دج / 17 نشاطاً 3300 دج) مع الحفاظ على رقم RIP؟")) return;
+                  setSavingSettings(true);
+                  setSettingsMsg(null);
+                  try {
+                    const res = await fetch("/api/admin/settings", {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        currency: settingsConfig.currency,
+                        previewLockEnabled: settingsConfig.previewLockEnabled,
+                        semesterPassExpiresAt: settingsConfig.semesterPassExpiresAt ?? "",
+                        supportWhatsapp: settingsConfig.supportWhatsapp,
+                        referral: settingsConfig.referral,
+                        payment: settingsConfig.payment,
+                        resetPackagesToDefaults: true,
+                      }),
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.config) {
+                      setSettingsConfig(data.config);
+                      setSettingsMsg({
+                        type: "ok",
+                        text: "تم تحديث البطاقات إلى الباقات الحجمية النظيفة (1 / 3 / 17 نشاطاً) مع الإبقاء على بيانات الدفع!",
+                      });
+                    }
+                  } finally {
+                    setSavingSettings(false);
+                  }
+                }}
+                className="px-3.5 py-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-bold text-xs"
+              >
+                تطبيق نصوص باقات (1 / 3 / 17) الجاهزة
+              </button>
+
+              <button
+                type="submit"
+                disabled={savingSettings}
+                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+              >
+                <Save className="w-4 h-4" />
+                {savingSettings ? "جاري الحفظ..." : "حفظ الإعدادات وتطبيقها فورا"}
+              </button>
+            </div>
           </div>
         </form>
       )}

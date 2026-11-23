@@ -14,6 +14,7 @@ import {
   normalizeCode,
   validatePromoOrReferralCode,
 } from "@/lib/promo-referral";
+import { consumeOneCredit, issueCreditPassForOrder } from "@/lib/credit-passes";
 import {
   AcademicCycle,
   AcademicYearCode,
@@ -194,22 +195,32 @@ export async function POST(req: Request) {
     const pkg = await resolvePackagePriceAsync(requestedPackageId);
     const cfg = await getPublicAppConfigAsync();
 
-    // Server-side promo / referral discount resolution (never trust client-side price)
+    // Server-side promo / referral / credit pass resolution (never trust client-side price)
     const originalPriceDzd = pkg.priceDzd;
     let finalPriceDzd = originalPriceDzd;
     let discountPercent = 0;
     let discountAmountDzd = 0;
     let promoCodeUsed: string | undefined;
+    let creditPassUsed: string | undefined;
     let resolvedReferredBy: string | undefined;
+    let effectivePackageId = pkg.packageId;
 
     const codeToCheck = promoCodeInput || referredByInput;
     if (codeToCheck) {
-      const check = await validatePromoOrReferralCode(codeToCheck, originalPriceDzd);
+      const check = await validatePromoOrReferralCode(
+        codeToCheck,
+        originalPriceDzd,
+        pkg.packageId
+      );
       if (check.valid) {
         discountPercent = check.discountPercent;
         discountAmountDzd = check.discountAmountDzd;
         finalPriceDzd = check.finalPriceDzd;
-        if (check.kind === "promo") {
+        if (check.kind === "credit_pass") {
+          creditPassUsed = check.code;
+          effectivePackageId = "standard"; // Consuming 1 activity credit
+          finalPriceDzd = 0;
+        } else if (check.kind === "promo") {
           promoCodeUsed = check.code;
           await incrementPromoUsage(check.code);
         } else if (check.kind === "referral") {
@@ -219,7 +230,11 @@ export async function POST(req: Request) {
     }
     // If student also came via ?ref=... link AND typed a separate promo code, preserve referral attribution!
     if (!resolvedReferredBy && referredByInput) {
-      const refCheck = await validatePromoOrReferralCode(referredByInput, originalPriceDzd);
+      const refCheck = await validatePromoOrReferralCode(
+        referredByInput,
+        originalPriceDzd,
+        pkg.packageId
+      );
       if (refCheck.valid && refCheck.kind === "referral") {
         resolvedReferredBy = refCheck.code;
       }
@@ -244,11 +259,12 @@ export async function POST(req: Request) {
       includeCoverPage,
       strictReferencesOnly,
       usedLibraryRefCount: libraryRefCount,
-      packageId: pkg.packageId,
+      packageId: effectivePackageId,
       originalPriceDzd,
       discountPercent,
       discountAmountDzd,
       promoCodeUsed,
+      creditPassUsed,
       referralCode: myReferralCode,
       referredByCode: resolvedReferredBy ? normalizeCode(resolvedReferredBy) : undefined,
       rewardPromoCodes: [],
@@ -259,6 +275,18 @@ export async function POST(req: Request) {
       files: savedFiles,
     });
 
+    let remainingPassCredits: number | undefined;
+    let issuedPassCode: string | undefined;
+    if (creditPassUsed) {
+      const updatedPass = await consumeOneCredit(creditPassUsed, order.id);
+      if (updatedPass) {
+        remainingPassCredits = Math.max(0, updatedPass.totalCredits - updatedPass.usedCredits);
+      }
+    } else if (initialPaymentStatus === "waived") {
+      const pass = await issueCreditPassForOrder(order);
+      if (pass) issuedPassCode = pass.passCode;
+    }
+
     const origin = new URL(req.url).origin;
     void sendTelegramAlert(
       `📥 طلب جديد في المنصة\n` +
@@ -266,10 +294,12 @@ export async function POST(req: Request) {
         `الطالب: ${order.studentName}${order.contact ? ` (${order.contact})` : ""}\n` +
         `المسار: ${resolvedSpecialtyText || "غير محدد"}\n` +
         `المقياس: ${order.moduleName} — ${order.assignmentTitle}\n` +
-        `الباقة: ${pkg.packageName} — الصافي: ${finalPriceDzd} ${cfg.currency}` +
-        (discountPercent > 0
-          ? ` (خصم ${discountPercent}% ${promoCodeUsed ? `بكود ${promoCodeUsed}` : resolvedReferredBy ? `بإحالة ${resolvedReferredBy}` : ""})`
-          : "") +
+        (creditPassUsed
+          ? `🎟️ مسحوب من رصيد السداسي (${creditPassUsed} — متبقي ${remainingPassCredits ?? "?"})`
+          : `الباقة: ${pkg.packageName} — الصافي: ${finalPriceDzd} ${cfg.currency}` +
+            (discountPercent > 0
+              ? ` (خصم ${discountPercent}% ${promoCodeUsed ? `بكود ${promoCodeUsed}` : resolvedReferredBy ? `بإحالة ${resolvedReferredBy}` : ""})`
+              : "")) +
         `\nالمرفقات: ${savedFiles.length} ملف` +
         (libraryRefCount > 0 ? ` (+ ${libraryRefCount} مرجع تلقائي من المكتبة)` : "") +
         `\nالإدارة: ${origin}/admin/orders/${order.id}`
@@ -280,6 +310,9 @@ export async function POST(req: Request) {
         id: order.id,
         trackingCode: order.trackingCode,
         referralCode: order.referralCode,
+        issuedPassCode,
+        creditPassUsed,
+        remainingPassCredits,
         status: order.status,
         packageId: order.packageId,
         originalPriceDzd: order.originalPriceDzd,

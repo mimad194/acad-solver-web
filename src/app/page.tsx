@@ -54,41 +54,44 @@ const FALLBACK_CONFIG: PublicAppConfig = {
   packages: [
     {
       id: "standard",
-      name: "الباقة القياسية (نشاط فردي)",
-      priceDzd: 600,
-      subtitle: "مثالية للأنشطة النظرية أو التطبيقية المباشرة",
+      name: "نشاط واحد (للتجربة)",
+      priceDzd: 250,
+      creditsCount: 1,
+      subtitle: "مثالية لتجربة الجودة الكاملة في نشاط واحد بلا مخاطرة",
       features: [
-        "حل منهجي ملتزم بمطبوعات ومحاضرات الأستاذ",
-        "ملف Word عربي RTL أصلي بمعادلات وجداول جاهزة لـ Moodle",
-        "أسلوب صياغة متفرد وقالب تنسيق خاص بطلبك",
-        "بطاقة «دليل الفهم السريع» للتحضير للمناقشة",
+        "نفس الجودة القصوى: التزام بمطبوعات الأستاذ وتدقيق حسابي ومنهجي",
+        "ملف Word عربي RTL أصلي بمعادلات وجداول جاهزة للرفع في Moodle",
+        "بصمة أسلوبية وتنسيقية فريدة (تشابه < 20% مع باقي الدفعة)",
+        "بطاقة «دليل الفهم السريع والمناقشة» حصرية للطالب",
       ],
     },
     {
       id: "premium",
-      name: "باقة الامتياز (كمّي / ماستر)",
-      badge: "الأكثر طلبا",
+      name: "باقة الموجة الواحدة (3 أنشطة)",
+      badge: "الأكثر مرونة",
       highlighted: true,
-      priceDzd: 1200,
-      subtitle: "للأنشطة الكمية والإحصائية ودراسات الحالة المعمّقة",
+      priceDzd: 650,
+      creditsCount: 3,
+      subtitle: "تغطي موجة كاملة (2–3 أنشطة) برصيد مشترك صالح طوال السداسي",
       features: [
-        "تدقيق حسابي ومنهجي ثنائي المرحلة (توليد + مراجعة أستاذ مدقّق)",
-        "جداول حسابات وسيطة كاملة وتحليل تسييري/اقتصادي معمّق",
-        "أنسنة أكاديمية متقدمة وفحص تفرد الدفعة (تشابه < 20%)",
-        "دليل الفهم والمناقشة الشفوية + تعديل مجاني خلال 48 ساعة",
+        "رصيد 3 أنشطة كاملة بنفس الجودة القصوى (توفير مقارنة بالفردي)",
+        "رمز رصيد خاص (Pass Code) تستهلك منه أنشطتك دون تكرار الدفع",
+        "أنسنة أكاديمية متقدمة وفحص تفرد الدفعة (< 20%) لكل نشاط",
+        "دليل الفهم والمناقشة + تعديل مجاني خلال 48 ساعة",
       ],
     },
     {
       id: "semester",
-      name: "باقة السداسي (4 أنشطة)",
-      badge: "توفير 35%",
-      priceDzd: 2900,
-      subtitle: "مرافقة كاملة لأربعة أنشطة خلال السداسي بأولوية معالجة",
+      name: "باقة السداسي الشاملة (17 نشاطاً)",
+      badge: "توفير كبير — 6 موجات",
+      priceDzd: 3300,
+      creditsCount: 17,
+      subtitle: "مرافقة كاملة لكل أنشطة السداسي (60 يوماً قبل الامتحانات) برصيد موحّد",
       features: [
-        "تغطي 4 أنشطة جامعية بمستوى «باقة الامتياز» الكامل",
-        "أولوية قصوى في الإعداد والمراجعة والتسليم",
-        "تنويع القوالب وأساليب الكتابة لكل نشاط",
-        "حجز مقعد مضمون ضمن حصة الدفعة المحدودة",
+        "رصيد 17 نشاطاً جامعياً يغطي كافة موجات السداسي قبل الامتحانات",
+        "دفع مرة واحدة + رمز رصيد (Pass Code) لطلب كل موجة في 10 ثوانٍ",
+        "أمان وخصوصية تامة دون الحاجة لمشاركة كلمة سر حسابك في Moodle",
+        "بصمة منهجية وتنسيق Word مختلف كليا لكل نشاط (تشابه < 20%)",
       ],
     },
   ],
@@ -122,17 +125,22 @@ export default function StudentOrderPage() {
   const [validatingPromo, setValidatingPromo] = useState(false);
   const [appliedDiscount, setAppliedDiscount] = useState<{
     valid: boolean;
-    kind?: "promo" | "referral";
+    kind?: "promo" | "referral" | "credit_pass";
     code: string;
     discountPercent: number;
     discountAmountDzd: number;
     finalPriceDzd: number;
+    creditPassRemaining?: number;
+    creditPassTotal?: number;
+    creditPassExpiresAt?: string;
     message: string;
   } | null>(null);
   const [createdOrder, setCreatedOrder] = useState<{
     id: string;
     trackingCode: string;
     referralCode?: string;
+    creditPassUsed?: string;
+    remainingPassCredits?: number;
     priceDzd?: number;
     discountPercent?: number;
   } | null>(null);
@@ -155,6 +163,17 @@ export default function StudentOrderPage() {
         });
         const data = await res.json();
         setAppliedDiscount(data);
+        if (data.valid && data.kind === "credit_pass") {
+          setSelectedPackageId("standard");
+          if (data.prefillStudent) {
+            if (data.prefillStudent.studentName) setStudentName(data.prefillStudent.studentName);
+            if (data.prefillStudent.contact) setContact(data.prefillStudent.contact);
+            if (data.prefillStudent.university) setUniversity(data.prefillStudent.university);
+            if (data.prefillStudent.cycle) setCycle(data.prefillStudent.cycle);
+            if (data.prefillStudent.year) setYear(data.prefillStudent.year);
+            if (data.prefillStudent.specialtyId) setSpecialtyId(data.prefillStudent.specialtyId);
+          }
+        }
       } catch {
         setAppliedDiscount(null);
       } finally {
@@ -174,16 +193,22 @@ export default function StudentOrderPage() {
       })
       .catch(() => {});
 
-    // Auto-read ?ref=REF-XXXX or ?promo=CODE from URL
+    // Auto-read ?pass=PASS-XXXX, ?ref=REF-XXXX, or ?promo=CODE from URL
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
+      const passParam = sp.get("pass")?.trim() || "";
       const refParam = sp.get("ref")?.trim() || "";
       const promoParam = sp.get("promo")?.trim() || "";
       if (refParam) setReferredByUrl(refParam);
-      const initialCode = promoParam || refParam;
+      const initialCode = passParam || promoParam || refParam;
       if (initialCode) {
         setPromoInput(initialCode);
-        void validateCode(initialCode, "premium");
+        const initialPkg: PackageId =
+          passParam || promoParam.toUpperCase().startsWith("FREE-")
+            ? "standard"
+            : "premium";
+        if (initialPkg === "standard") setSelectedPackageId("standard");
+        void validateCode(initialCode, initialPkg);
       }
     }
   }, [validateCode]);
@@ -380,6 +405,8 @@ export default function StudentOrderPage() {
         id?: string;
         trackingCode?: string;
         referralCode?: string;
+        creditPassUsed?: string;
+        remainingPassCredits?: number;
         priceDzd?: number;
         discountPercent?: number;
         error?: string;
@@ -402,6 +429,8 @@ export default function StudentOrderPage() {
         id: data.id,
         trackingCode: data.trackingCode,
         referralCode: data.referralCode,
+        creditPassUsed: data.creditPassUsed,
+        remainingPassCredits: data.remainingPassCredits,
         priceDzd: data.priceDzd ?? selectedPkg?.priceDzd,
         discountPercent: data.discountPercent ?? 0,
       });
@@ -590,18 +619,25 @@ export default function StudentOrderPage() {
             <p className="text-sm text-slate-600">
               احتفظ برمز التتبع أدناه لمتابعة حالة الإعداد، ومعاينة الجزء الأول من الحل، ورفع وصل الدفع (BaridiMob / CCP) لتحميل ملف Word الكامل.
             </p>
-            {typeof createdOrder.priceDzd === "number" && (
-              <p className="text-xs font-bold text-navy-700 pt-1">
-                الباقة المختارة: {selectedPkg?.name} — المبلغ النهائي:{" "}
-                {createdOrder.priceDzd === 0 ? (
-                  <span className="text-emerald-700 font-black">مجاني 100% ✓</span>
-                ) : (
-                  <>
-                    {createdOrder.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
-                    {createdOrder.discountPercent ? ` (بعد خصم ${createdOrder.discountPercent}%)` : ""}
-                  </>
-                )}
+            {createdOrder.creditPassUsed ? (
+              <p className="text-xs font-bold text-emerald-700 pt-1">
+                🎟️ تم خصم نشاط واحد من رصيدك ({createdOrder.creditPassUsed}) — الرصيد المتبقي لك:{" "}
+                <strong>{createdOrder.remainingPassCredits ?? 0} نشاط</strong>
               </p>
+            ) : (
+              typeof createdOrder.priceDzd === "number" && (
+                <p className="text-xs font-bold text-navy-700 pt-1">
+                  الباقة المختارة: {selectedPkg?.name} — المبلغ النهائي:{" "}
+                  {createdOrder.priceDzd === 0 ? (
+                    <span className="text-emerald-700 font-black">مجاني 100% ✓</span>
+                  ) : (
+                    <>
+                      {createdOrder.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+                      {createdOrder.discountPercent ? ` (بعد خصم ${createdOrder.discountPercent}%)` : ""}
+                    </>
+                  )}
+                </p>
+              )
             )}
           </div>
 
@@ -1067,7 +1103,7 @@ export default function StudentOrderPage() {
           <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2.5">
             <label className="flex items-center gap-1.5 text-xs font-extrabold text-navy-800">
               <Tag className="w-3.5 h-3.5 text-amber-600" />
-              هل لديك كود برومو (تخفيض حتى 100%) أو كود إحالة زميل؟
+              هل لديك رمز رصيد السداسي (PASS-...) أو كود برومو أو كود إحالة زميل؟
             </label>
             <div className="flex flex-col sm:flex-row gap-2">
               <input
@@ -1078,7 +1114,7 @@ export default function StudentOrderPage() {
                   setPromoInput(e.target.value.toUpperCase());
                   if (!e.target.value.trim()) setAppliedDiscount(null);
                 }}
-                placeholder="مثال: UFC40 أو FREE-XXXXX أو REF-XXXXX"
+                placeholder="مثال: PASS-XXXXX أو FREE-XXXXX أو REF-XXXXX"
                 className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs uppercase focus:outline-none focus:ring-2 focus:ring-navy-600"
               />
               <button

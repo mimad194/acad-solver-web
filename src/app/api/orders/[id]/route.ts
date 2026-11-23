@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { deleteOrder, getOrderById, updateOrder } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
 import { processReferralQualification } from "@/lib/promo-referral";
+import { issueCreditPassForOrder } from "@/lib/credit-passes";
 import {
   OrderStatus,
   PackageId,
@@ -85,7 +86,23 @@ export async function PATCH(
     mintedReferralReward = await processReferralQualification(updated).catch(() => null);
   }
 
-  return NextResponse.json({ order: updated, mintedReferralReward });
+  let issuedPassCode: string | null = updated.issuedPassCode ?? null;
+  if (updated.paymentStatus === "paid" || updated.paymentStatus === "waived") {
+    const pass = await issueCreditPassForOrder(updated).catch(() => null);
+    if (pass) {
+      issuedPassCode = pass.passCode;
+    }
+  }
+
+  const finalOrder = issuedPassCode
+    ? { ...updated, issuedPassCode }
+    : updated;
+
+  return NextResponse.json({
+    order: finalOrder,
+    mintedReferralReward,
+    issuedPassCode,
+  });
 }
 
 export async function DELETE(

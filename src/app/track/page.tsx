@@ -68,6 +68,16 @@ interface ReferralStats {
   rewardPromoCodes: Array<{ code: string; used: boolean }>;
 }
 
+interface CreditPassSummary {
+  passCode: string;
+  totalCredits: number;
+  usedCredits: number;
+  remainingCredits: number;
+  expiresAt: string;
+  expired: boolean;
+  active: boolean;
+}
+
 const STEPS: Array<{ key: OrderStatus; label: string; desc: string }> = [
   { key: "pending", label: "تم استلام الطلب", desc: "الطلب مسجل وبانتظار مراجعة المشرف" },
   { key: "in_review", label: "قيد الإعداد والمراجعة", desc: "يجري حل النشاط وتدقيق المعادلات والجداول" },
@@ -93,6 +103,8 @@ function TrackContent() {
   const [order, setOrder] = useState<TrackedOrder | null>(null);
   const [config, setConfig] = useState<PublicAppConfig | null>(null);
   const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
+  const [creditPass, setCreditPass] = useState<CreditPassSummary | null>(null);
+  const [copiedPass, setCopiedPass] = useState(false);
 
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [referenceNote, setReferenceNote] = useState("");
@@ -120,6 +132,7 @@ function TrackContent() {
       setOrder(data.order);
       if (data.config) setConfig(data.config);
       setReferralStats(data.referralStats ?? null);
+      setCreditPass(data.creditPass ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر البحث عن الطلب.");
     } finally {
@@ -385,6 +398,73 @@ function TrackContent() {
               </div>
             )}
           </section>
+
+          {/* Semester Activity Credits Pass Card (PASS-XXXXX) */}
+          {creditPass && (
+            <section className="bg-gradient-to-l from-navy-800 to-navy-700 text-white rounded-2xl p-6 shadow-md space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/15">
+                <div>
+                  <p className="text-xs font-bold text-amber-300">
+                    🎟️ بطاقة رصيد أنشطة السداسي (صالح قبل الامتحانات الحضورية)
+                  </p>
+                  <h3 className="text-lg font-extrabold mt-0.5">
+                    المتبقي لك: {creditPass.remainingCredits} من أصل {creditPass.totalCredits} نشاط
+                  </h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    dir="ltr"
+                    className="font-mono text-sm font-black px-3 py-1.5 rounded-xl bg-white text-navy-900"
+                  >
+                    {creditPass.passCode}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(creditPass.passCode);
+                      setCopiedPass(true);
+                      setTimeout(() => setCopiedPass(false), 2000);
+                    }}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-xs font-bold"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    {copiedPass ? "نُسخ ✓" : "نسخ الرمز"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="w-full h-2.5 bg-white/20 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-emerald-400 rounded-full transition-all"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      (creditPass.remainingCredits / Math.max(1, creditPass.totalCredits)) * 100
+                    )}%`,
+                  }}
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
+                <span className="text-slate-200">
+                  صالح خلال السداسي الحالي حتى تاريخ:{" "}
+                  <strong dir="ltr" className="text-white">
+                    {creditPass.expiresAt.slice(0, 10)}
+                  </strong>
+                  {creditPass.expired && " (منتهي الصلاحية)"}
+                </span>
+
+                {!creditPass.expired && creditPass.remainingCredits > 0 && (
+                  <Link
+                    href={`/?pass=${encodeURIComponent(creditPass.passCode)}`}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-extrabold text-xs shadow"
+                  >
+                    اطلب نشاطك القادم من رصيدك في 10 ثوانٍ ←
+                  </Link>
+                )}
+              </div>
+            </section>
+          )}
 
           {/* Viral Referral Progress & 100% Free Reward Card */}
           {referralStats?.enabled && referralStats.referralCode && (

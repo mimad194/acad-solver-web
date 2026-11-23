@@ -5,6 +5,7 @@ import {
   isOrderPaymentUnlockedAsync,
 } from "@/lib/pricing-config";
 import { getReferralStatsForOrder } from "@/lib/promo-referral";
+import { getCreditPass } from "@/lib/credit-passes";
 import type { SolutionDocument } from "@/types/order";
 
 export const dynamic = "force-dynamic";
@@ -54,10 +55,24 @@ export async function GET(req: Request) {
   }
 
   const referralStats = await getReferralStatsForOrder(order);
+  const activePassCode = order.issuedPassCode || order.creditPassUsed;
+  const passEntry = activePassCode ? await getCreditPass(activePassCode) : null;
+  const creditPassInfo = passEntry
+    ? {
+        passCode: passEntry.passCode,
+        totalCredits: passEntry.totalCredits,
+        usedCredits: passEntry.usedCredits,
+        remainingCredits: Math.max(0, passEntry.totalCredits - passEntry.usedCredits),
+        expiresAt: passEntry.expiresAt,
+        expired: new Date() > new Date(passEntry.expiresAt),
+        active: passEntry.active,
+      }
+    : null;
 
   return NextResponse.json({
     config,
     referralStats,
+    creditPass: creditPassInfo,
     order: {
       id: order.id,
       trackingCode: order.trackingCode,

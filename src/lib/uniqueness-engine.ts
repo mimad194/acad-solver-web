@@ -1,4 +1,5 @@
 import type {
+  DepthBandId,
   DocxHeadingVariant,
   DocxTableVariant,
   DocxVisualDNA,
@@ -271,6 +272,35 @@ function fnv1aHash(str: string): number {
   return h >>> 0;
 }
 
+export const DEPTH_BANDS: Record<
+  DepthBandId,
+  { label: string; directive: string }
+> = {
+  concise_solid: {
+    label: "موجز ومنضبط",
+    directive:
+      "مستوى التفصيل التحريري لهذا الطالب (أسلوب جيد ومباشر دون إطالة زائدة): أجب عن كل سؤال بدقة علمية صحيحة، لكن اجعل التعليقات التفسيرية مقتضبة ومباشرة في جملتين إلى ثلاث جمل مركزة دون توسع نظري إضافي أو تشعبات ثانوية.",
+  },
+  balanced_thorough: {
+    label: "متوازن ووافٍ",
+    directive:
+      "مستوى التفصيل التحريري لهذا الطالب (أسلوب جيد جداً ومتوازن): قدّم الخطوات الحسابية والجداول الوسيطة كاملة مع تفسير واضح ومنظم لكل نتيجة مرتبط بمعطيات الدرس.",
+  },
+  exhaustive_honors: {
+    label: "معمّق وشامل",
+    directive:
+      "مستوى التفصيل التحريري لهذا الطالب (أسلوب امتياز بحثي شامل): فصّل كل خطوة، أضف تحققات رياضية متقاطعة وقراءة تسييرية/نقدية معمّقة وتوصيات دقيقة مستخلصة من النتائج.",
+  },
+};
+
+function pickDepthBand(hashVal: number): DepthBandId {
+  // Natural cohort distribution: ~30% concise_solid, ~45% balanced_thorough, ~25% exhaustive_honors
+  const r = hashVal % 100;
+  if (r < 30) return "concise_solid";
+  if (r < 75) return "balanced_thorough";
+  return "exhaustive_honors";
+}
+
 /**
  * Allocates a collision-free SolutionDNA across 17,280 prose combinations x 2,304 Word visual layouts
  * so hundreds or thousands of students in the same cohort never repeat the same fingerprint.
@@ -291,6 +321,7 @@ export function allocateUniqueDNA(
     const numberingId = NUMBERING_AXES[h2 % NUMBERING_AXES.length].id;
     const lexiconId = LEXICON_BANKS[(h2 >>> 5) % LEXICON_BANKS.length].id;
     const mathStyleId = MATH_PRESENTATION_AXES[(h2 >>> 10) % MATH_PRESENTATION_AXES.length].id;
+    const depthBand = pickDepthBand(h1 ^ h2);
 
     const fontPairId = FONT_PAIRS[h3 % FONT_PAIRS.length].id;
     const paletteId = COLOR_PALETTES[(h3 >>> 4) % COLOR_PALETTES.length].id;
@@ -312,6 +343,7 @@ export function allocateUniqueDNA(
         numberingId,
         lexiconId,
         mathStyleId,
+        depthBand,
         visualDna: {
           fontPairId,
           paletteId,
@@ -357,6 +389,7 @@ export function buildDnaPromptBlock(dna: SolutionDNA): string {
   const n = NUMBERING_AXES.find((x) => x.id === dna.numberingId) ?? NUMBERING_AXES[0];
   const l = LEXICON_BANKS.find((x) => x.id === dna.lexiconId) ?? LEXICON_BANKS[0];
   const m = MATH_PRESENTATION_AXES.find((x) => x.id === dna.mathStyleId) ?? MATH_PRESENTATION_AXES[0];
+  const d = DEPTH_BANDS[dna.depthBand ?? "balanced_thorough"];
 
   return `البصمة المنهجية والتحريرية الخاصة بهذا الطالب فقط (التزم بها بدقة لتحقيق تباين كامل عن بقية الدفعة):
 - البنية التنظيمية (${s.label}): ${s.directive}
@@ -364,7 +397,8 @@ export function buildDnaPromptBlock(dna: SolutionDNA): string {
 - إيقاع الفقرات (${c.label}): ${c.directive}
 - نمط العناوين والترقيم (${n.label}): ${n.directive}
 - معجم الروابط والمفردات (${l.label}): ${l.directive}
-- أسلوب العرض الحسابي (${m.label}): ${m.directive}`;
+- أسلوب العرض الحسابي (${m.label}): ${m.directive}
+- مستوى التوسع والتفصيل: ${d.directive}`;
 }
 
 export function summarizeDnaLabel(dna?: SolutionDNA): string {

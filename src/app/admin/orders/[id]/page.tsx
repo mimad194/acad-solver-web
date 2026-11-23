@@ -101,6 +101,8 @@ export default function AdminOrderWorkspacePage({
     archivedNames: string[];
   } | null>(null);
   const [archivingRefs, setArchivingRefs] = useState(false);
+  const [hasBlueprint, setHasBlueprint] = useState(false);
+  const [blueprintBusy, setBlueprintBusy] = useState<"save" | "spawn" | null>(null);
   const [activeTab, setActiveTab] = useState<"preview" | "edit">("preview");
 
   const [loading, setLoading] = useState(true);
@@ -157,6 +159,14 @@ export default function AdminOrderWorkspacePage({
         .then((d) => {
           if (d && typeof d.archivedCount === "number") {
             setArchivedRefs(d);
+          }
+        })
+        .catch(() => {});
+      fetch(`/api/orders/${o.id}/blueprint`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && typeof d.hasBlueprint === "boolean") {
+            setHasBlueprint(d.hasBlueprint);
           }
         })
         .catch(() => {});
@@ -388,6 +398,52 @@ export default function AdminOrderWorkspacePage({
       });
     } finally {
       setArchivingRefs(false);
+    }
+  };
+
+  const handleBlueprintAction = async (action: "save" | "spawn") => {
+    if (!order) return;
+    setBlueprintBusy(action);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/orders/${order.id}/blueprint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          model: selectedModel,
+          styleProfile,
+          docxTheme,
+          extraInstruction,
+        }),
+      });
+      const data = await safeReadJson(res);
+      if (!res.ok) throw new Error(String(data.error || "تعذر تنفيذ العملية."));
+      if (action === "save") {
+        setHasBlueprint(true);
+        setMessage({
+          type: "ok",
+          text: "تم حفظ هذا الحل كـ «مرجع معتمد للموجة»! أي طالب لاحق في نفس النشاط يمكنك توليد نسخته الفريدة (< 20%) في 10 ثوانٍ فقط.",
+        });
+      } else {
+        const updatedOrder = data.order as StudentOrder;
+        setOrder(updatedOrder);
+        setSolution(updatedOrder.solution);
+        setStatus(updatedOrder.status);
+        setActiveTab("preview");
+        void loadSimilarity(order.id);
+        setMessage({
+          type: "ok",
+          text: `تم التوليد السريع من المرجع المعتمد للموجة بنجاح عبر (${String(data.usedModel || selectedModel)}) ببصمة فريدة وتشابه مضمون!`,
+        });
+      }
+    } catch (err) {
+      setMessage({
+        type: "err",
+        text: err instanceof Error ? err.message : "حدث خطأ.",
+      });
+    } finally {
+      setBlueprintBusy(null);
     }
   };
 
@@ -746,12 +802,42 @@ export default function AdminOrderWorkspacePage({
             <button
               type="button"
               onClick={() => handleGenerateAi()}
-              disabled={generating || refiningMode !== null}
+              disabled={generating || refiningMode !== null || blueprintBusy !== null}
               className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
             >
               <Sparkles className="w-4 h-4" />
               {generating ? "جاري تحليل المراجع وإعداد الحل (المرحلة 1)..." : "توليد الحل الآن (المرحلة 1)"}
             </button>
+
+            {hasBlueprint && (
+              <button
+                type="button"
+                onClick={() => handleBlueprintAction("spawn")}
+                disabled={generating || refiningMode !== null || blueprintBusy !== null}
+                className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
+              >
+                <Sparkles className="w-4 h-4" />
+                {blueprintBusy === "spawn"
+                  ? "جاري التوليد السريع ببصمة فريدة..."
+                  : "⚡ توليد سريع من المرجع المعتمد للموجة (~10 ثوانٍ)"}
+              </button>
+            )}
+
+            {solution && (
+              <button
+                type="button"
+                onClick={() => handleBlueprintAction("save")}
+                disabled={generating || refiningMode !== null || blueprintBusy !== null}
+                className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-white hover:bg-navy-50 border border-navy-200 text-navy-800 font-bold text-xs disabled:opacity-60"
+              >
+                <Library className="w-3.5 h-3.5" />
+                {blueprintBusy === "save"
+                  ? "جاري الحفظ..."
+                  : hasBlueprint
+                  ? "تحديث الحل المرجعي المحفوظ للموجة ✓"
+                  : "حفظ هذا الحل كـ «مرجع معتمد للموجة» (لتسريع 300 طالب)"}
+              </button>
+            )}
           </div>
 
           {/* Stage-2 Expert Quality Lab */}
@@ -985,6 +1071,30 @@ export default function AdminOrderWorkspacePage({
                 />
               </div>
             </div>
+
+            {(order.issuedPassCode || order.creditPassUsed || order.promoCodeUsed) && (
+              <div className="p-2.5 rounded-xl bg-navy-50 border border-navy-200 text-[11px] text-navy-900 space-y-1">
+                {order.issuedPassCode && (
+                  <p>
+                    <strong>🎟️ رمز رصيد السداسي الصادر:</strong>{" "}
+                    <span dir="ltr" className="font-mono font-black">{order.issuedPassCode}</span>
+                  </p>
+                )}
+                {order.creditPassUsed && (
+                  <p>
+                    <strong>🎟️ مخصوم من رمز الرصيد:</strong>{" "}
+                    <span dir="ltr" className="font-mono font-black">{order.creditPassUsed}</span>
+                  </p>
+                )}
+                {order.promoCodeUsed && (
+                  <p>
+                    <strong>كود البرومو المستخدم:</strong>{" "}
+                    <span dir="ltr" className="font-mono font-bold">{order.promoCodeUsed}</span>{" "}
+                    ({order.discountPercent ?? 0}%)
+                  </p>
+                )}
+              </div>
+            )}
 
             {order.paymentReceipt && (
               <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs space-y-1.5">

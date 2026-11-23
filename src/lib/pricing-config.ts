@@ -21,54 +21,57 @@ function getLocalSettingsPath(): string {
 }
 
 function buildDefaultPackages(): PricingPackage[] {
-  const stdPrice = parsePositiveInt(process.env.PRICE_STANDARD_DZD, 600);
-  const premPrice = parsePositiveInt(process.env.PRICE_PREMIUM_DZD, 1200);
-  const semPrice = parsePositiveInt(process.env.PRICE_SEMESTER_DZD, 2900);
+  const stdPrice = parsePositiveInt(process.env.PRICE_STANDARD_DZD, 250);
+  const wavePrice = parsePositiveInt(process.env.PRICE_PREMIUM_DZD, 650);
+  const semPrice = parsePositiveInt(process.env.PRICE_SEMESTER_DZD, 3300);
 
   return [
     {
       id: "standard",
-      name: process.env.PACKAGE_STANDARD_NAME?.trim() || "الباقة القياسية (نشاط فردي)",
+      name: process.env.PACKAGE_STANDARD_NAME?.trim() || "نشاط واحد (للتجربة)",
       priceDzd: stdPrice,
+      creditsCount: 1,
       subtitle:
         process.env.PACKAGE_STANDARD_DESC?.trim() ||
-        "مثالية للأنشطة النظرية أو التطبيقية المباشرة",
+        "مثالية لتجربة الجودة الكاملة في نشاط واحد بلا مخاطرة",
       features: [
-        "حل منهجي ملتزم بمطبوعات ومحاضرات الأستاذ",
-        "ملف Word عربي RTL أصلي بمعادلات وجداول جاهزة لـ Moodle",
-        "أسلوب صياغة متفرد وقالب تنسيق خاص بطلبك",
-        "بطاقة «دليل الفهم السريع» للتحضير للمناقشة",
+        "نفس الجودة القصوى: التزام بمطبوعات الأستاذ وتدقيق حسابي ومنهجي",
+        "ملف Word عربي RTL أصلي بمعادلات وجداول جاهزة للرفع في Moodle",
+        "بصمة أسلوبية وتنسيقية فريدة (تشابه < 20% مع باقي الدفعة)",
+        "بطاقة «دليل الفهم السريع والمناقشة» حصرية للطالب",
       ],
     },
     {
       id: "premium",
-      name: process.env.PACKAGE_PREMIUM_NAME?.trim() || "باقة الامتياز (كمّي / ماستر)",
-      badge: "الأكثر طلبا",
+      name: process.env.PACKAGE_PREMIUM_NAME?.trim() || "باقة الموجة الواحدة (3 أنشطة)",
+      badge: "الأكثر مرونة",
       highlighted: true,
-      priceDzd: premPrice,
+      priceDzd: wavePrice,
+      creditsCount: 3,
       subtitle:
         process.env.PACKAGE_PREMIUM_DESC?.trim() ||
-        "للأنشطة الكمية والإحصائية ودراسات الحالة المعمّقة",
+        "تغطي موجة كاملة (2–3 أنشطة) برصيد مشترك صالح طوال السداسي",
       features: [
-        "تدقيق حسابي ومنهجي ثنائي المرحلة (توليد + مراجعة أستاذ مدقّق)",
-        "جداول حسابات وسيطة كاملة وتحليل تسييري/اقتصادي معمّق",
-        "أنسنة أكاديمية متقدمة وفحص تفرد الدفعة (تشابه < 20%)",
-        "دليل الفهم والمناقشة الشفوية + تعديل مجاني خلال 48 ساعة",
+        "رصيد 3 أنشطة كاملة بنفس الجودة القصوى (توفير مقارنة بالفردي)",
+        "رمز رصيد خاص (Pass Code) تستهلك منه أنشطتك دون تكرار الدفع",
+        "أنسنة أكاديمية متقدمة وفحص تفرد الدفعة (< 20%) لكل نشاط",
+        "دليل الفهم والمناقشة + تعديل مجاني خلال 48 ساعة",
       ],
     },
     {
       id: "semester",
-      name: process.env.PACKAGE_SEMESTER_NAME?.trim() || "باقة السداسي (4 أنشطة)",
-      badge: "توفير 35%",
+      name: process.env.PACKAGE_SEMESTER_NAME?.trim() || "باقة السداسي الشاملة (17 نشاطاً)",
+      badge: "توفير كبير — 6 موجات",
       priceDzd: semPrice,
+      creditsCount: 17,
       subtitle:
         process.env.PACKAGE_SEMESTER_DESC?.trim() ||
-        "مرافقة كاملة لأربعة أنشطة خلال السداسي بأولوية معالجة",
+        "مرافقة كاملة لكل أنشطة السداسي (60 يوماً قبل الامتحانات) برصيد موحّد",
       features: [
-        "تغطي 4 أنشطة جامعية بمستوى «باقة الامتياز» الكامل",
-        "أولوية قصوى في الإعداد والمراجعة والتسليم",
-        "بصمة منهجية وتنسيق Word مختلف كليا لكل نشاط",
-        "فحص تفرد آلي (< 20%) مقابل كامل طلبات الدفعة",
+        "رصيد 17 نشاطاً جامعياً يغطي كافة موجات السداسي قبل الامتحانات",
+        "دفع مرة واحدة + رمز رصيد (Pass Code) لطلب كل موجة في 10 ثوانٍ",
+        "أمان وخصوصية تامة دون الحاجة لمشاركة كلمة سر حسابك في Moodle",
+        "بصمة منهجية وتنسيق Word مختلف كليا لكل نشاط (تشابه < 20%)",
       ],
     },
   ];
@@ -110,6 +113,7 @@ export function getEnvAppConfig(): PublicAppConfig {
     packages,
     cohortMaxSlots,
     previewLockEnabled,
+    semesterPassExpiresAt: process.env.SEMESTER_PASS_EXPIRES_AT?.trim() || "",
     referral: {
       enabled: referralEnabled,
       targetCount: referralTargetCount,
@@ -127,6 +131,7 @@ export function getEnvAppConfig(): PublicAppConfig {
 export interface StoredCommercialOverrides {
   currency?: string;
   previewLockEnabled?: boolean;
+  semesterPassExpiresAt?: string;
   supportWhatsapp?: string;
   referral?: {
     enabled?: boolean;
@@ -144,6 +149,7 @@ export interface StoredCommercialOverrides {
     subtitle?: string;
     badge?: string;
     priceDzd?: number;
+    creditsCount?: number;
     features?: string[];
   }>;
   updatedAt?: string;
@@ -207,6 +213,12 @@ export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
         typeof patch.priceDzd === "number" && Number.isFinite(patch.priceDzd) && patch.priceDzd >= 0
           ? Math.round(patch.priceDzd)
           : pkg.priceDzd,
+      creditsCount:
+        typeof patch.creditsCount === "number" &&
+        Number.isFinite(patch.creditsCount) &&
+        patch.creditsCount >= 1
+          ? Math.round(patch.creditsCount)
+          : pkg.creditsCount,
       features:
         cleanedFeatures && cleanedFeatures.length > 0
           ? cleanedFeatures
@@ -221,6 +233,10 @@ export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
       typeof ov.previewLockEnabled === "boolean"
         ? ov.previewLockEnabled
         : base.previewLockEnabled,
+    semesterPassExpiresAt:
+      ov.semesterPassExpiresAt !== undefined
+        ? ov.semesterPassExpiresAt.trim()
+        : base.semesterPassExpiresAt,
     referral: {
       enabled:
         typeof ov.referral?.enabled === "boolean"
@@ -264,16 +280,20 @@ export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
 export async function resolvePackagePriceAsync(packageId?: PackageId): Promise<{
   packageId: PackageId;
   priceDzd: number;
+  creditsCount: number;
   packageName: string;
 }> {
   const cfg = await getPublicAppConfigAsync();
   const matched =
     cfg.packages.find((p) => p.id === packageId) ??
-    cfg.packages.find((p) => p.id === "premium") ??
+    cfg.packages.find((p) => p.id === "standard") ??
     cfg.packages[0];
   return {
     packageId: matched.id,
     priceDzd: matched.priceDzd,
+    creditsCount:
+      matched.creditsCount ??
+      (matched.id === "semester" ? 17 : matched.id === "premium" ? 3 : 1),
     packageName: matched.name,
   };
 }

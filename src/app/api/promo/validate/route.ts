@@ -14,7 +14,8 @@ export async function POST(req: Request) {
     const pkg = await resolvePackagePriceAsync(body.packageId);
     const result = await validatePromoOrReferralCode(
       String(body.code ?? ""),
-      pkg.priceDzd
+      pkg.priceDzd,
+      pkg.packageId
     );
     return NextResponse.json({
       ...result,

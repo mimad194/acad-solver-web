@@ -1,11 +1,18 @@
 import crypto from "crypto";
 import fs from "fs/promises";
 import path from "path";
-import type { PromoCodeEntry, StudentOrder } from "@/types/order";
+import type {
+  AcademicCycle,
+  AcademicYearCode,
+  PackageId,
+  PromoCodeEntry,
+  StudentOrder,
+} from "@/types/order";
 import { getFirestoreDb } from "./firebase-admin";
 import { getPublicAppConfigAsync } from "./pricing-config";
 import { listOrders, updateOrder } from "./store";
 import { sendTelegramAlert } from "./notify";
+import { validateCreditPass } from "./credit-passes";
 
 const PROMO_COLLECTION = "promo_codes";
 
@@ -86,6 +93,7 @@ export async function upsertPromoCode(input: {
   discountPercent: number;
   maxUses?: number;
   active?: boolean;
+  allowedPackageIds?: PackageId[];
   note?: string;
   source?: "admin" | "referral_reward";
   ownerOrderId?: string;
@@ -104,6 +112,7 @@ export async function upsertPromoCode(input: {
     maxUses,
     usedCount: existing?.usedCount ?? 0,
     active: input.active !== undefined ? Boolean(input.active) : existing?.active ?? true,
+    allowedPackageIds: input.allowedPackageIds ?? existing?.allowedPackageIds,
     note: input.note !== undefined ? input.note.trim() : existing?.note,
     source: input.source ?? existing?.source ?? "admin",
     ownerOrderId: input.ownerOrderId ?? existing?.ownerOrderId,
@@ -163,18 +172,30 @@ export async function incrementPromoUsage(rawCode: string): Promise<void> {
 
 export interface DiscountValidationResult {
   valid: boolean;
-  kind?: "promo" | "referral";
+  kind?: "promo" | "referral" | "credit_pass";
   code: string;
   discountPercent: number;
   discountAmountDzd: number;
   finalPriceDzd: number;
   referrerName?: string;
+  creditPassRemaining?: number;
+  creditPassTotal?: number;
+  creditPassExpiresAt?: string;
+  prefillStudent?: {
+    studentName: string;
+    contact: string;
+    university: string;
+    cycle?: AcademicCycle;
+    year?: AcademicYearCode;
+    specialtyId?: string;
+  };
   message: string;
 }
 
 export async function validatePromoOrReferralCode(
   rawCode: string,
-  basePriceDzd: number
+  basePriceDzd: number,
+  packageId?: PackageId
 ): Promise<DiscountValidationResult> {
   const code = normalizeCode(rawCode);
   if (!code) {
@@ -184,11 +205,47 @@ export async function validatePromoOrReferralCode(
       discountPercent: 0,
       discountAmountDzd: 0,
       finalPriceDzd: basePriceDzd,
-      message: "يرجى إدخال كود برومو أو كود إحالة.",
+      message: "يرجى إدخال كود برومو أو كود إحالة أو رمز رصيد (PASS-...).",
     };
   }
 
-  // 1) Check Promo Codes first
+  // 0) Check Semester Activity Credit Pass (PASS-XXXXX)
+  if (code.startsWith("PASS-")) {
+    const passCheck = await validateCreditPass(code);
+    if (!passCheck.valid || !passCheck.pass) {
+      return {
+        valid: false,
+        kind: "credit_pass",
+        code,
+        discountPercent: 0,
+        discountAmountDzd: 0,
+        finalPriceDzd: basePriceDzd,
+        message: passCheck.message,
+      };
+    }
+    return {
+      valid: true,
+      kind: "credit_pass",
+      code: passCheck.pass.passCode,
+      discountPercent: 100,
+      discountAmountDzd: basePriceDzd,
+      finalPriceDzd: 0,
+      creditPassRemaining: passCheck.remainingCredits,
+      creditPassTotal: passCheck.pass.totalCredits,
+      creditPassExpiresAt: passCheck.pass.expiresAt,
+      prefillStudent: {
+        studentName: passCheck.pass.studentName,
+        contact: passCheck.pass.contact,
+        university: passCheck.pass.university,
+        cycle: passCheck.pass.cycle,
+        year: passCheck.pass.year,
+        specialtyId: passCheck.pass.specialtyId,
+      },
+      message: passCheck.message,
+    };
+  }
+
+  // 1) Check Promo Codes
   const promo = await getPromoCode(code);
   if (promo) {
     if (!promo.active) {
@@ -209,6 +266,22 @@ export async function validatePromoOrReferralCode(
         discountAmountDzd: 0,
         finalPriceDzd: basePriceDzd,
         message: "تم استنفاد العدد الأقصى لاستخدامات هذا الكود.",
+      };
+    }
+    // Enforce package scope (e.g. referral reward FREE-XXXXX is strictly for single activity `standard`!)
+    const allowed =
+      promo.allowedPackageIds ??
+      (promo.source === "referral_reward" ? (["standard"] as PackageId[]) : undefined);
+    if (allowed && allowed.length > 0 && packageId && !allowed.includes(packageId)) {
+      return {
+        valid: false,
+        kind: "promo",
+        code: promo.code,
+        discountPercent: 0,
+        discountAmountDzd: 0,
+        finalPriceDzd: basePriceDzd,
+        message:
+          "هذا الكود المجاني مخصص لباقة «نشاط واحد» فقط لحماية الرصيد. اختر باقة «نشاط واحد» لتفعيله مجانا 100%!",
       };
     }
     const discountAmountDzd = Math.round((basePriceDzd * promo.discountPercent) / 100);
@@ -360,7 +433,8 @@ export async function processReferralQualification(
     discountPercent: 100,
     maxUses: 1,
     active: true,
-    note: `مكافأة إحالات (${qualifiedCount} إحالات مؤكدة) للطالب ${referrerOrder.studentName}`,
+    allowedPackageIds: ["standard"], // Strictly 1 free single activity only!
+    note: `مكافأة إحالات (${qualifiedCount} إحالات مؤكدة — نشاط واحد مجاني) للطالب ${referrerOrder.studentName}`,
     source: "referral_reward",
     ownerOrderId: referrerOrder.id,
   });

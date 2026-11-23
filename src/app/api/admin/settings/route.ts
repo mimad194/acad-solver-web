@@ -21,14 +21,17 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "غير مصرح بالوصول" }, { status: 401 });
   }
   try {
-    const body = (await req.json()) as StoredCommercialOverrides;
+    const body = (await req.json()) as StoredCommercialOverrides & {
+      resetPackagesToDefaults?: boolean;
+    };
     const config = await saveCommercialOverrides({
       currency: body.currency,
       previewLockEnabled: body.previewLockEnabled,
+      semesterPassExpiresAt: body.semesterPassExpiresAt,
       supportWhatsapp: body.supportWhatsapp,
       referral: body.referral,
       payment: body.payment,
-      packages: body.packages,
+      packages: body.resetPackagesToDefaults ? undefined : body.packages,
     });
     return NextResponse.json({ ok: true, config });
   } catch (err) {

@@ -26,6 +26,7 @@ export interface PricingPackage {
   name: string;
   badge?: string;
   priceDzd: number;
+  creditsCount?: number; // 1 for single, 3 for wave pack, 17 for semester pack
   subtitle: string;
   features: string[];
   highlighted?: boolean;
@@ -43,10 +44,31 @@ export interface PromoCodeEntry {
   maxUses: number; // 0 = unlimited
   usedCount: number;
   active: boolean;
+  allowedPackageIds?: PackageId[]; // e.g. ["standard"] for referral reward codes
   note?: string;
   source?: "admin" | "referral_reward";
   ownerOrderId?: string;
   createdAt: string;
+}
+
+export interface CreditPassEntry {
+  passCode: string; // e.g. PASS-7K4M2
+  ownerOrderId: string;
+  studentName: string;
+  contact: string;
+  university: string;
+  cycle?: AcademicCycle;
+  year?: AcademicYearCode;
+  specialtyId?: string;
+  specialty: string;
+  packageId: PackageId;
+  totalCredits: number;
+  usedCredits: number;
+  consumedOrderIds: string[];
+  expiresAt: string; // ISO date — valid within current semester before exams
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface PublicAppConfig {
@@ -54,6 +76,7 @@ export interface PublicAppConfig {
   packages: PricingPackage[];
   cohortMaxSlots: number;
   previewLockEnabled: boolean;
+  semesterPassExpiresAt?: string; // YYYY-MM-DD (pre-exam cutoff for semester credits)
   referral: ReferralConfig;
   payment: {
     baridimobRip: string;
@@ -111,6 +134,8 @@ export interface DocxVisualDNA {
   spacingId: "compact" | "standard" | "airy";
 }
 
+export type DepthBandId = "concise_solid" | "balanced_thorough" | "exhaustive_honors";
+
 export interface SolutionDNA {
   signature: string;
   structureId: string;
@@ -119,6 +144,7 @@ export interface SolutionDNA {
   numberingId: string;
   lexiconId: string;
   mathStyleId: string;
+  depthBand?: DepthBandId;
   visualDna: DocxVisualDNA;
 }
 
@@ -255,6 +281,8 @@ export interface StudentOrder {
   discountPercent?: number;
   discountAmountDzd?: number;
   promoCodeUsed?: string;
+  creditPassUsed?: string;
+  issuedPassCode?: string;
   referralCode?: string;
   referredByCode?: string;
   rewardPromoCodes?: string[];
