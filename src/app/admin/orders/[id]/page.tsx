@@ -53,6 +53,8 @@ interface SimilarityReport {
   maxSimilarity: number;
   comparedCount: number;
   matches: SimilarityMatch[];
+  topSharedPhrases?: string[];
+  dnaLabel?: string;
 }
 
 const THEME_LIST = Object.values(DOCX_THEMES);
@@ -298,6 +300,8 @@ export default function AdminOrderWorkspacePage({
       const label =
         mode === "deepen_and_audit"
           ? "تم إتمام التدقيق الحسابي والمنهجي والتعميق الأكاديمي (المرحلة 2)"
+          : mode === "surgical_diverge"
+          ? "تم تنفيذ فك التشابه الجراحي مع تخصيص بصمة أسلوبية وبصرية جديدة بنجاح"
           : mode === "humanize_academic"
           ? "تمت أنسنة الصياغة الأكاديمية بنجاح مع الحفاظ الكامل على الأرقام والمعادلات"
           : "تم تحديث دليل الفهم والمناقشة للطالب بنجاح";
@@ -318,7 +322,28 @@ export default function AdminOrderWorkspacePage({
   const handleThemeChange = (nextTheme: DocxThemeId) => {
     setDocxTheme(nextTheme);
     if (solution) {
-      setSolution({ ...solution, docxTheme: nextTheme });
+      const paletteMap: Record<DocxThemeId, { paletteId: string; fontPairId: string }> = {
+        classic_navy: { paletteId: "navy", fontPairId: "trad_times" },
+        charcoal_minimal: { paletteId: "charcoal", fontPairId: "simp_calibri" },
+        emerald_academic: { paletteId: "emerald", fontPairId: "majalla_times" },
+        burgundy_formal: { paletteId: "burgundy", fontPairId: "trad_times" },
+        print_bw: { paletteId: "print_bw", fontPairId: "simp_times" },
+      };
+      const mapped = paletteMap[nextTheme];
+      setSolution({
+        ...solution,
+        docxTheme: nextTheme,
+        dna: solution.dna
+          ? {
+              ...solution.dna,
+              visualDna: {
+                ...solution.dna.visualDna,
+                paletteId: mapped.paletteId,
+                fontPairId: mapped.fontPairId,
+              },
+            }
+          : undefined,
+      });
     }
   };
 
@@ -799,18 +824,39 @@ export default function AdminOrderWorkspacePage({
                 <p className="text-xs text-slate-400">جاري فحص التشابه مع طلبات الدفعة...</p>
               )}
 
-              <button
-                type="button"
-                onClick={handleRegenerateDistinct}
-                disabled={generating}
-                className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-bold text-xs disabled:opacity-60"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                إعادة الصياغة بأسلوب وقالب مختلفين
-              </button>
+              {(similarity?.dnaLabel || solution.qualityMeta?.dnaLabel) && (
+                <div className="p-2.5 rounded-xl bg-navy-50/70 border border-navy-100 text-[11px] text-navy-900">
+                  <strong className="block mb-0.5">البصمة المنهجية والبصرية المخصصة:</strong>
+                  <span>{similarity?.dnaLabel || solution.qualityMeta?.dnaLabel}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleRefine("surgical_diverge")}
+                  disabled={generating || refiningMode !== null}
+                  className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-navy-700 hover:bg-navy-600 text-white font-bold text-xs disabled:opacity-60 shadow-sm"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  {refiningMode === "surgical_diverge"
+                    ? "جاري فك التشابه الجراحي وتوليد بصمة جديدة..."
+                    : "فك التشابه الجراحي الآلي (< 20%)"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRegenerateDistinct}
+                  disabled={generating || refiningMode !== null}
+                  className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-bold text-xs disabled:opacity-60"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  إعادة التوليد الكامل بأسلوب وقالب جديدين
+                </button>
+              </div>
 
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                نصيحة قبل الاعتماد: مراجعة الفقرات وتعديل جملتين أو ثلاث بصياغتك الخاصة في تبويب «التحرير» يمنح العمل أعلى درجات الطابع البشري الطبيعي.
+                النظام يفحص كامل طلبات المقياس (حتى 300+ طالب)، ويحظر العبارات المتكررة عبر الدفعة ويُشغّل فك التشابه الجراحي تلقائيا عند تجاوز 18%.
               </p>
             </div>
           )}

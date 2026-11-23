@@ -1,9 +1,11 @@
 import type {
   AcademicDiscipline,
+  SolutionDNA,
   StudentOrder,
   StyleProfileId,
 } from "@/types/order";
 import { getStyleProfile } from "./style-profiles";
+import { buildDnaPromptBlock } from "./uniqueness-engine";
 
 export interface DisciplineProfileConfig {
   id: Exclude<AcademicDiscipline, "auto">;
@@ -188,10 +190,20 @@ export function buildStage1SystemPrompt(params: {
   order: StudentOrder;
   styleId: StyleProfileId;
   discipline: Exclude<AcademicDiscipline, "auto">;
+  dna?: SolutionDNA;
+  hotCohortPhrases?: string[];
   siblingSnippets: string[];
   extraInstruction?: string;
 }): string {
-  const { order, styleId, discipline, siblingSnippets, extraInstruction } = params;
+  const {
+    order,
+    styleId,
+    discipline,
+    dna,
+    hotCohortPhrases = [],
+    siblingSnippets,
+    extraInstruction,
+  } = params;
   const style = getStyleProfile(styleId);
   const disc = DISCIPLINE_PROFILES[discipline];
 
@@ -199,11 +211,18 @@ export function buildStage1SystemPrompt(params: {
     ? "- التزام صارم 100% بالمراجع المرفوعة: استعمل حصريا القوانين، الرموز، سلالم التفسير، والتعريفات الواردة في ملفات الدروس والمطبوعات المرفقة مع الطلب، ولا تستورد طرقا أو مصطلحات من خارجها."
     : "- اعتمد أساسا على المراجع المرفقة مع الطلب مع إثراء التحليل المنهجي بدقة أكاديمية رفيعة.";
 
+  const dnaBlock = dna ? `\n${buildDnaPromptBlock(dna)}\n` : "";
+
+  const hotBlacklistBlock =
+    hotCohortPhrases.length > 0
+      ? `\nالقائمة السوداء للعبارات المتكررة عبر كامل الدفعة (يُحظر تماما استخدام هذه التراكيب الثلاثية حرفيا في النثر والتعليقات، واستبدلها ببدائل عربية طبيعية من معجم هذا الطالب):
+[ ${hotCohortPhrases.slice(0, 45).join(" ، ")} ]\n`
+      : "";
+
   const antiDuplicateSection =
     siblingSnippets.length > 0
-      ? `\nتنويع الصياغة ومنع التكرار داخل نفس الدفعة:
-سبق إعداد حلول أخرى في نفس المقياس، لذلك يُشترط ألا تعيد استخدام نفس التراكيب اللغوية أو افتتاحيات الفقرات أو نفس صياغة التعليقات الواردة في المقتطفات التالية (حافظ على صحة الأرقام والقوانين فقط، وغيّر كليا أسلوب الصياغة وبنية العرض والربط بين الأفكار):
-${siblingSnippets.map((s, i) => `--- مقتطف أسلوب سابق (${i + 1}) يجب الابتعاد عن صياغته ---\n${s}`).join("\n")}\n`
+      ? `\nمقتطفات من افتتاحيات سابقة في نفس المقياس يجب الابتعاد كليا عن صياغتها وبنيتها:
+${siblingSnippets.map((s, i) => `(${i + 1}) ${s}`).join("\n")}\n`
       : "";
 
   return `أنت خبير أكاديمي وأستاذ باحث برتبة أستاذ محاضر متخصص في تأطير طلبة الماستر وإعداد حلول نموذجية فائقة الجودة تفوق بمراحل الإجابات السطحية لأدوات الذكاء الاصطناعي التقليدية.
@@ -216,11 +235,11 @@ ${strictRule}
 - ${disc.rubricDirective}
 - دقة التقريب المقترحة للأرقام العشرية في هذا الأسلوب: ${style.suggestedDecimals} أرقام بعد الفاصلة (ما لم يفرض نص التمرين أو المرجع عددا آخر).
 
-2) الأسلوب التحريري الأصيل وتفادي بصمة الذكاء الاصطناعي:
+2) الأسلوب التحريري الأصيل والتفرد المنهجي عبر كامل الدفعة (الهدف: تشابه < 20%):
 - نمط التحرير المختار لهذا الطلب (${style.label}): ${style.promptDirective}
-${ANTI_CLICHE_RULES}
+${dnaBlock}${ANTI_CLICHE_RULES}
 - عند وجود أكثر من صيغة رياضية متكافئة داخل المراجع المرفوعة، اختر الصيغة الأنسب لهذا الأسلوب لتنويع طريقة العرض المنهجية مع ضمان تطابق النتائج الرياضية تماما.
-${antiDuplicateSection}
+${hotBlacklistBlock}${antiDuplicateSection}
 3) قواعد تنسيق المعادلات والجداول ومخطط JSON الصارم:
 - اكتب جميع المعادلات والرموز الرياضية والإحصائية بصيغة LaTeX قياسية ونظيفة:
   * داخل الفقرات والنقاط وخلايا الجداول: ضع الرموز والمعادلات القصيرة بين علامتي دولار مفردتين مثل $\\hat{\\beta}_1 = 16.7302$ أو $R^2 = 99.40\\%$.
@@ -306,4 +325,39 @@ ${siblingBlock}
   "studyGuide": { "summary": "...", "keyPoints": ["..."], "defenseQuestions": ["..."] }
 }
 ${extraInstruction ? `\nتوجيه إضافي من المشرف:\n${extraInstruction}` : ""}`;
+}
+
+export function buildSurgicalDivergencePrompt(params: {
+  dna?: SolutionDNA;
+  sharedPhrases: string[];
+  hotCohortPhrases: string[];
+  extraInstruction?: string;
+}): string {
+  const { dna, sharedPhrases, hotCohortPhrases, extraInstruction } = params;
+  const dnaBlock = dna ? `\n${buildDnaPromptBlock(dna)}\n` : "";
+
+  return `أنت محرر أكاديمي متخصص في فك التشابه النصي الجراحي (Surgical Divergence) بين أعمال طلبة الدفعة الواحدة مع الحفاظ الكامل على الصحة العلمية والرياضية.
+
+الهدف الدقيق: خفض نسبة التشابه اللفظي الثلاثي (3-gram) مع بقية طلبة المقياس إلى أقل من 15% عبر إعادة بناء الجمل والفقرات والتعليقات العربية جذريا.
+
+قواعد صارمة غير قابلة للمساس:
+1. قفل 100% على الرياضيات والجداول: احتفظ بجميع الأرقام، العلامات السالبة، معادلات LaTeX في كتل "equation" وداخل $...$، وقيم خلايا الجداول الرقمية كما هي حرفيا دون أي تغيير.
+2. تخلّص تماما من كل عبارة متقاطعة في القائمة التالية (أعد صياغة الجمل التي تحتويها باستخدام تراكيب نحوية مختلفة، مبني للمجهول/معلوم مغاير، تقديم وتأخير، ومرادفات أكاديمية جديدة):
+العبارات المتقاطعة مباشرة مع أقرب الزملاء:
+[ ${sharedPhrases.slice(0, 40).join(" ، ")} ]
+${
+  hotCohortPhrases.length > 0
+    ? `\nعبارات شائعة عبر كامل الدفعة يجب تجنبها أيضا:\n[ ${hotCohortPhrases.slice(0, 35).join(" ، ")} ]\n`
+    : ""
+}${dnaBlock}${ANTI_CLICHE_RULES}
+3. مهم جدا لصحة JSON: ضاعف كل شرطة مائلة عكسية داخل سلاسل JSON (\\\\frac، \\\\sum، \\\\hat، \\\\beta، \\\\%).
+
+أعد نفس JSON الكامل بعد فك التشابه مع حقل "auditNotes" يوضح بإيجاز ما تم تغييره أسلوبيا:
+{
+  "title": "عنوان الحل",
+  "auditNotes": ["تمت إعادة صياغة المقاطع المتقاطعة مع طلبات الدفعة بأسلوب مستقل مع تثبيت كافة المعادلات والأرقام."],
+  "blocks": [ ... ],
+  "studyGuide": { "summary": "...", "keyPoints": ["..."], "defenseQuestions": ["..."] }
+}
+${extraInstruction ? `\nملاحظة إضافية من المشرف:\n${extraInstruction}` : ""}`;
 }

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { getOrderById, listOrders } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
-import { computeProseSimilarityPercent } from "@/lib/style-profiles";
+import {
+  evaluateAgainstCohort,
+  summarizeDnaLabel,
+} from "@/lib/uniqueness-engine";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +18,13 @@ export async function GET(
   const { id } = await context.params;
   const order = await getOrderById(id);
   if (!order || !order.solution) {
-    return NextResponse.json({ maxSimilarity: 0, comparedCount: 0, matches: [] });
+    return NextResponse.json({
+      maxSimilarity: 0,
+      comparedCount: 0,
+      matches: [],
+      topSharedPhrases: [],
+      dnaLabel: "",
+    });
   }
 
   const all = await listOrders();
@@ -27,19 +36,9 @@ export async function GET(
       o.moduleName.trim().toLowerCase() === normMod
   );
 
-  const matches = peers
-    .map((peer) => ({
-      id: peer.id,
-      trackingCode: peer.trackingCode,
-      studentName: peer.studentName,
-      similarity: computeProseSimilarityPercent(order.solution!, peer.solution!),
-    }))
-    .sort((a, b) => b.similarity - a.similarity);
-
-  const maxSimilarity = matches[0]?.similarity ?? 0;
+  const report = evaluateAgainstCohort(order.solution, peers);
   return NextResponse.json({
-    maxSimilarity,
-    comparedCount: peers.length,
-    matches: matches.slice(0, 5),
+    ...report,
+    dnaLabel: order.solution.qualityMeta?.dnaLabel || summarizeDnaLabel(order.solution.dna),
   });
 }

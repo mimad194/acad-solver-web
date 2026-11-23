@@ -69,7 +69,39 @@ export type AcademicDiscipline =
 export type RefineMode =
   | "deepen_and_audit"     // تدقيق حسابي ومنهجي وتعميق شامل (المرحلة 2)
   | "humanize_academic"    // أنسنة أكاديمية للنثر مع تثبيت الأرقام والمعادلات
+  | "surgical_diverge"     // فك تشابه جراحي يستهدف العبارات المتقاطعة مع الدفعة فقط
   | "enrich_study_guide";  // توليد/تحديث دليل الفهم والمناقشة للطالب
+
+export type DocxTableVariant =
+  | "classic_grid"
+  | "modern_horizontal"
+  | "tinted_minimal"
+  | "booktabs";
+
+export type DocxHeadingVariant =
+  | "shaded_band"
+  | "bottom_rule"
+  | "right_accent"
+  | "minimal_bold";
+
+export interface DocxVisualDNA {
+  fontPairId: string;
+  paletteId: string;
+  tableVariant: DocxTableVariant;
+  headingVariant: DocxHeadingVariant;
+  spacingId: "compact" | "standard" | "airy";
+}
+
+export interface SolutionDNA {
+  signature: string;
+  structureId: string;
+  voiceId: string;
+  cadenceId: string;
+  numberingId: string;
+  lexiconId: string;
+  mathStyleId: string;
+  visualDna: DocxVisualDNA;
+}
 
 export interface StudyGuideMeta {
   summary: string;
@@ -81,6 +113,9 @@ export interface QualityAuditMeta {
   discipline: Exclude<AcademicDiscipline, "auto">;
   auditPassApplied: boolean;
   humanizedPassApplied?: boolean;
+  autoDivergenceApplied?: boolean;
+  cohortMaxSimilarity?: number;
+  dnaLabel?: string;
   verifiedQuestionsCount?: number;
   auditNotes?: string[];
   studyGuide?: StudyGuideMeta;
@@ -148,6 +183,7 @@ export interface SolutionDocument {
   includeCoverPage: boolean;
   styleProfile?: StyleProfileId;
   docxTheme?: DocxThemeId;
+  dna?: SolutionDNA;
   qualityMeta?: QualityAuditMeta;
   coverMeta?: {
     university?: string;

@@ -304,10 +304,10 @@ export default function StudentOrderPage() {
             <ShieldCheck className="w-5 h-5" />
           </div>
           <h2 className="font-extrabold text-sm text-navy-800">
-            تفرد مضمون لحصة محدودة ({appConfig.cohortMaxSlots} طلبة/دفعة)
+            بصمة منهجية وتنسيقية فريدة (تشابه &lt; 20%)
           </h2>
           <p className="text-xs text-slate-600 leading-relaxed">
-            لكل طالب أسلوب صياغة أكاديمي طبيعي وقالب Word مختلف وفحص تلقائي لمنع تشابه النصوص بين طلبة نفس الدفعة، مع إمكانية المعاينة الجزئية قبل إتمام الدفع.
+            محرك تباين متقدم بآلاف التركيبات الأسلوبية والبصرية وفحص تلقائي ضد كامل طلبات الدفعة لضمان استقلالية كل ملف Word مهما كان عدد الطلبة في المركز، مع معاينة جزئية قبل الدفع.
           </p>
         </div>
         <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
@@ -336,7 +336,7 @@ export default function StudentOrderPage() {
               </p>
             </div>
             <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 self-start">
-              حصة الدفعة: بحد أقصى {appConfig.cohortMaxSlots} طلبات لنفس النشاط
+              بصمة فريدة لكل طالب • فحص تشابه تلقائي أقل من 20%
             </span>
           </div>
 

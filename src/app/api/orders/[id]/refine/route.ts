@@ -14,6 +14,7 @@ export const dynamic = "force-dynamic";
 const ALLOWED_MODES = new Set<RefineMode>([
   "deepen_and_audit",
   "humanize_academic",
+  "surgical_diverge",
   "enrich_study_guide",
 ]);
 

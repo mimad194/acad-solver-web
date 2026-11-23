@@ -1,7 +1,67 @@
 import JSZip from "jszip";
-import type { DocumentBlock, SolutionDocument } from "@/types/order";
+import type {
+  DocumentBlock,
+  DocxHeadingVariant,
+  DocxTableVariant,
+  SolutionDocument,
+} from "@/types/order";
 import { escapeXml, latexToOmmlDisplay, latexToOmmlInline } from "./latex-to-omml";
 import { type DocxThemeConfig, getDocxTheme } from "./style-profiles";
+import {
+  COLOR_PALETTES,
+  FONT_PAIRS,
+  SPACING_PROFILES,
+} from "./uniqueness-engine";
+
+interface ResolvedVisualTheme extends DocxThemeConfig {
+  tableVariant: DocxTableVariant;
+  headingVariant: DocxHeadingVariant;
+  marginTwips: number;
+  lineSpacing: number;
+  paraAfter: number;
+}
+
+function resolveVisualTheme(solution: SolutionDocument): ResolvedVisualTheme {
+  const base = getDocxTheme(solution.docxTheme);
+  const vdna = solution.dna?.visualDna;
+  if (!vdna) {
+    return {
+      ...base,
+      tableVariant: "classic_grid",
+      headingVariant: "shaded_band",
+      marginTwips: 1020,
+      lineSpacing: 276,
+      paraAfter: 70,
+    };
+  }
+
+  const fp = FONT_PAIRS.find((f) => f.id === vdna.fontPairId);
+  const pal = COLOR_PALETTES.find((p) => p.id === vdna.paletteId);
+  const sp = SPACING_PROFILES[vdna.spacingId] ?? SPACING_PROFILES.standard;
+
+  return {
+    ...base,
+    arFont: fp?.arFont ?? base.arFont,
+    laFont: fp?.laFont ?? base.laFont,
+    szBodyAr: fp?.szBodyAr ?? base.szBodyAr,
+    szBodyLa: fp?.szBodyLa ?? base.szBodyLa,
+    primaryColor: pal?.primaryColor ?? base.primaryColor,
+    accentColor: pal?.accentColor ?? base.accentColor,
+    subHeadingColor: pal?.subHeadingColor ?? base.subHeadingColor,
+    headerBg: pal?.headerBg ?? base.headerBg,
+    headerText: pal?.headerText ?? base.headerText,
+    zebraBg: pal?.zebraBg ?? base.zebraBg,
+    totalBg: pal?.totalBg ?? base.totalBg,
+    calloutBg: pal?.calloutBg ?? base.calloutBg,
+    borderColor: pal?.borderColor ?? base.borderColor,
+    exHeadingBg: pal?.exHeadingBg ?? base.exHeadingBg,
+    tableVariant: vdna.tableVariant,
+    headingVariant: vdna.headingVariant,
+    marginTwips: sp.marginTwips,
+    lineSpacing: sp.lineSpacing,
+    paraAfter: sp.paraAfter,
+  };
+}
 
 function arRun(
   text: string,
@@ -159,7 +219,7 @@ function computeColWidths(headers: string[], rows: string[][], maxWidth = 9860):
 
 function renderTableBlock(
   block: Extract<DocumentBlock, { type: "table" }>,
-  theme: DocxThemeConfig
+  theme: ResolvedVisualTheme
 ): string {
   let out = "";
   if (block.caption) {
@@ -174,20 +234,32 @@ function renderTableBlock(
     );
   }
 
-  const colWidths = computeColWidths(block.headers, block.rows, 9860);
+  const contentWidth = Math.max(8800, 11906 - theme.marginTwips * 2);
+  const colWidths = computeColWidths(block.headers, block.rows, contentWidth);
   const totalW = colWidths.reduce((a, b) => a + b, 0);
   const dense = block.headers.length >= 8;
   const szNum = dense ? 18 : 20;
   const szAr = dense ? Math.max(20, theme.szBodyAr - 6) : Math.max(22, theme.szBodyAr - 4);
 
+  const isHorizontalOnly =
+    theme.tableVariant === "modern_horizontal" || theme.tableVariant === "booktabs";
+  const isLightHeader =
+    theme.tableVariant === "tinted_minimal" || theme.tableVariant === "booktabs";
+
   let tbl = `<w:tbl><w:tblPr><w:bidiVisual/><w:tblW w:w="${totalW}" w:type="dxa"/><w:jc w:val="center"/>`;
   tbl += `<w:tblBorders>`;
-  tbl += `<w:top w:val="single" w:sz="8" w:space="0" w:color="${theme.accentColor}"/>`;
-  tbl += `<w:left w:val="single" w:sz="8" w:space="0" w:color="${theme.accentColor}"/>`;
-  tbl += `<w:bottom w:val="single" w:sz="8" w:space="0" w:color="${theme.accentColor}"/>`;
-  tbl += `<w:right w:val="single" w:sz="8" w:space="0" w:color="${theme.accentColor}"/>`;
+  tbl += `<w:top w:val="single" w:sz="${theme.tableVariant === "booktabs" ? 12 : 8}" w:space="0" w:color="${theme.accentColor}"/>`;
+  tbl += `<w:bottom w:val="single" w:sz="${theme.tableVariant === "booktabs" ? 12 : 8}" w:space="0" w:color="${theme.accentColor}"/>`;
+  if (isHorizontalOnly) {
+    tbl += `<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>`;
+    tbl += `<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>`;
+    tbl += `<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>`;
+  } else {
+    tbl += `<w:left w:val="single" w:sz="6" w:space="0" w:color="${theme.borderColor}"/>`;
+    tbl += `<w:right w:val="single" w:sz="6" w:space="0" w:color="${theme.borderColor}"/>`;
+    tbl += `<w:insideV w:val="single" w:sz="4" w:space="0" w:color="${theme.borderColor}"/>`;
+  }
   tbl += `<w:insideH w:val="single" w:sz="4" w:space="0" w:color="${theme.borderColor}"/>`;
-  tbl += `<w:insideV w:val="single" w:sz="4" w:space="0" w:color="${theme.borderColor}"/>`;
   tbl += `</w:tblBorders>`;
   tbl += `<w:tblLayout w:type="fixed"/>`;
   tbl += `<w:tblCellMar><w:top w:w="60" w:type="dxa"/><w:left w:w="50" w:type="dxa"/><w:bottom w:w="60" w:type="dxa"/><w:right w:w="50" w:type="dxa"/></w:tblCellMar>`;
@@ -197,6 +269,18 @@ function renderTableBlock(
   }
   tbl += `</w:tblGrid>`;
 
+  const hdrFill =
+    theme.tableVariant === "booktabs"
+      ? "FFFFFF"
+      : isLightHeader
+      ? theme.exHeadingBg
+      : theme.headerBg;
+  const hdrTextColor = isLightHeader ? theme.primaryColor : theme.headerText;
+  const hdrBottomBorder =
+    theme.tableVariant === "booktabs"
+      ? `<w:tcBorders><w:bottom w:val="single" w:sz="8" w:space="0" w:color="${theme.primaryColor}"/></w:tcBorders>`
+      : "";
+
   // Header row
   tbl += `<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>`;
   block.headers.forEach((h, i) => {
@@ -204,9 +288,10 @@ function renderTableBlock(
       szAr,
       szLa: szNum,
       bold: true,
-      color: theme.headerText,
+      color: hdrTextColor,
     });
-    tbl += `<w:tc><w:tcPr><w:tcW w:w="${colWidths[i]}" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="${theme.headerBg}"/><w:vAlign w:val="center"/></w:tcPr>`;
+    const shd = hdrFill !== "FFFFFF" ? `<w:shd w:val="clear" w:color="auto" w:fill="${hdrFill}"/>` : "";
+    tbl += `<w:tc><w:tcPr><w:tcW w:w="${colWidths[i]}" w:type="dxa"/>${shd}${hdrBottomBorder}<w:vAlign w:val="center"/></w:tcPr>`;
     tbl += makeParagraph(inner, { jc: "center", before: 20, after: 20, line: 240, bidi: true });
     tbl += `</w:tc>`;
   });
@@ -215,7 +300,8 @@ function renderTableBlock(
   // Data rows
   block.rows.forEach((row, rIdx) => {
     const isTotal = Boolean(block.hasTotalRow) && rIdx === block.rows.length - 1;
-    const zebra = !isTotal && rIdx % 2 === 1;
+    const zebra =
+      theme.tableVariant !== "booktabs" && !isTotal && rIdx % 2 === 1;
     const fill = isTotal ? theme.totalBg : zebra ? theme.zebraBg : null;
     const color = isTotal ? theme.primaryColor : "1A1A1A";
 
@@ -335,7 +421,8 @@ function renderCoverPage(doc: SolutionDocument, theme: DocxThemeConfig): string 
   return xml;
 }
 
-function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
+function renderBlock(block: DocumentBlock, theme: ResolvedVisualTheme): string {
+  const hv = theme.headingVariant;
   switch (block.type) {
     case "doc_title":
       return makeParagraph(
@@ -346,12 +433,16 @@ function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
           color: theme.primaryColor,
         }),
         {
-          jc: "center",
+          jc: hv === "right_accent" ? "right" : "center",
           before: 0,
           after: 180,
           line: 260,
           keepNext: true,
-          borderBottom: { sz: 14, color: theme.primaryColor },
+          shading: hv === "shaded_band" ? theme.exHeadingBg : undefined,
+          borderBottom:
+            hv === "minimal_bold"
+              ? undefined
+              : { sz: hv === "bottom_rule" ? 16 : 12, color: theme.primaryColor },
         }
       );
 
@@ -369,8 +460,15 @@ function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
           after: 110,
           line: 260,
           keepNext: true,
-          shading: theme.exHeadingBg,
-          borderRight: { sz: 24, color: theme.primaryColor },
+          shading: hv === "shaded_band" ? theme.exHeadingBg : undefined,
+          borderRight:
+            hv === "shaded_band" || hv === "right_accent"
+              ? { sz: 24, color: theme.primaryColor }
+              : undefined,
+          borderBottom:
+            hv === "bottom_rule"
+              ? { sz: 10, color: theme.primaryColor }
+              : undefined,
         }
       );
 
@@ -388,7 +486,10 @@ function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
           after: 70,
           line: 260,
           keepNext: true,
-          borderBottom: { sz: 4, color: theme.borderColor },
+          borderBottom:
+            hv === "shaded_band" || hv === "bottom_rule"
+              ? { sz: 4, color: theme.borderColor }
+              : undefined,
         }
       );
 
@@ -412,9 +513,9 @@ function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
     case "paragraph":
       return makeParagraph(parseRichInline(block.text, theme), {
         jc: "both",
-        before: 50,
-        after: 70,
-        line: 276,
+        before: 45,
+        after: theme.paraAfter,
+        line: theme.lineSpacing,
       });
 
     case "bullet":
@@ -423,9 +524,9 @@ function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
           parseRichInline(block.text, theme),
         {
           jc: "both",
-          before: 30,
-          after: 55,
-          line: 276,
+          before: 25,
+          after: Math.max(40, theme.paraAfter - 20),
+          line: theme.lineSpacing,
           indentRight: 260,
         }
       );
@@ -433,15 +534,26 @@ function renderBlock(block: DocumentBlock, theme: DocxThemeConfig): string {
     case "equation": {
       const sz = block.latex.length > 90 ? 20 : block.callout ? 23 : 22;
       const omathPara = latexToOmmlDisplay(block.latex, sz);
+      const useBox = block.callout && hv !== "minimal_bold";
       return makeParagraph(omathPara, {
         jc: "center",
         before: 55,
         after: 75,
         line: 260,
         bidi: true,
-        shading: block.callout ? theme.calloutBg : undefined,
-        borderBox: block.callout ? { sz: 6, color: theme.borderColor } : undefined,
-        borderRight: block.callout ? { sz: 20, color: theme.accentColor } : undefined,
+        shading: useBox ? theme.calloutBg : undefined,
+        borderBox:
+          useBox && hv === "shaded_band"
+            ? { sz: 6, color: theme.borderColor }
+            : undefined,
+        borderRight:
+          useBox && (hv === "shaded_band" || hv === "right_accent")
+            ? { sz: 20, color: theme.accentColor }
+            : undefined,
+        borderBottom:
+          block.callout && hv === "minimal_bold"
+            ? { sz: 6, color: theme.borderColor }
+            : undefined,
       });
     }
 
@@ -555,7 +667,7 @@ function buildFooterXml(theme: DocxThemeConfig): string {
 }
 
 export async function generateRtlDocxBuffer(solution: SolutionDocument): Promise<Uint8Array> {
-  const theme = getDocxTheme(solution.docxTheme);
+  const theme = resolveVisualTheme(solution);
   let bodyContent = "";
   if (solution.includeCoverPage) {
     bodyContent += renderCoverPage(solution, theme);
@@ -564,6 +676,7 @@ export async function generateRtlDocxBuffer(solution: SolutionDocument): Promise
     bodyContent += renderBlock(block, theme);
   }
 
+  const m = theme.marginTwips;
   const documentXml =
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
     `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +
@@ -573,7 +686,7 @@ export async function generateRtlDocxBuffer(solution: SolutionDocument): Promise
     `<w:sectPr>` +
     `<w:footerReference w:type="default" r:id="rId1"/>` +
     `<w:pgSz w:w="11906" w:h="16838"/>` +
-    `<w:pgMar w:top="1020" w:right="1020" w:bottom="1020" w:left="1020" w:header="567" w:footer="567" w:gutter="0"/>` +
+    `<w:pgMar w:top="${m}" w:right="${m}" w:bottom="${m}" w:left="${m}" w:header="567" w:footer="567" w:gutter="0"/>` +
     `<w:bidi/>` +
     `</w:sectPr></w:body></w:document>`;
 

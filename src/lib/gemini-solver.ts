@@ -16,8 +16,17 @@ import {
   buildStage1SystemPrompt,
   buildStage2AuditPrompt,
   buildStage2HumanizePrompt,
+  buildSurgicalDivergencePrompt,
   detectAcademicDiscipline,
 } from "./expert-prompts";
+import {
+  allocateUniqueDNA,
+  analyzeCohortCorpus,
+  evaluateAgainstCohort,
+  summarizeDnaLabel,
+} from "./uniqueness-engine";
+
+const AUTO_DIVERGE_THRESHOLD = 18; // Safety buffer below 20% ceiling
 
 const SUPPORTED_INLINE_MIMES = new Set([
   "application/pdf",
@@ -524,6 +533,21 @@ function stripBlockIds(blocks: DocumentBlock[]): Array<Record<string, unknown>> 
   });
 }
 
+async function listPeersForModule(order: StudentOrder): Promise<StudentOrder[]> {
+  try {
+    const all = await listOrders();
+    const normMod = order.moduleName.trim().toLowerCase();
+    return all.filter(
+      (o) =>
+        o.id !== order.id &&
+        o.solution !== null &&
+        o.moduleName.trim().toLowerCase() === normMod
+    );
+  } catch {
+    return [];
+  }
+}
+
 export interface GenerateOptions {
   extraInstruction?: string;
   preferredModel?: string;
@@ -548,20 +572,29 @@ export async function generateSolutionWithGemini(
   const chosenTheme: DocxThemeId = options.docxTheme ?? auto.docxTheme;
   const resolvedDiscipline = detectAcademicDiscipline(order, options.discipline);
 
-  const [siblingSnippets, parts] = await Promise.all([
-    collectSiblingSnippets(order),
+  const [peers, parts] = await Promise.all([
+    listPeersForModule(order),
     buildOrderAttachmentParts(apiKey, order),
   ]);
 
+  const corpus = analyzeCohortCorpus(peers);
+  const dna = allocateUniqueDNA(
+    `${order.id}-${order.trackingCode}-${order.studentName}`,
+    corpus.usedProseSignatures,
+    corpus.usedVisualSignatures
+  );
+
   parts.push({
-    text: "قم الآن بحل التمرين كاملا بكل تفاصيله وجداوله الوسيطة وتحليلاته العميقة وفق بروتوكول التخصص والأسلوب المطلوبين، مع توليد studyGuide للطالب، وأعد JSON المهيكَل فقط.",
+    text: "قم الآن بحل التمرين كاملا بكل تفاصيله وجداوله الوسيطة وتحليلاته العميقة وفق بروتوكول التخصص والبصمة المنهجية الخاصة بهذا الطالب، مع توليد studyGuide للطالب، وأعد JSON المهيكَل فقط.",
   });
 
   const systemText = buildStage1SystemPrompt({
     order,
     styleId: chosenStyle,
     discipline: resolvedDiscipline,
-    siblingSnippets,
+    dna,
+    hotCohortPhrases: corpus.hotCohortPhrases,
+    siblingSnippets: corpus.recentOpenings,
     extraInstruction: options.extraInstruction,
   });
 
@@ -570,7 +603,7 @@ export async function generateSolutionWithGemini(
     systemText,
     userParts: parts,
     preferredModel: options.preferredModel,
-    temperature: 0.42,
+    temperature: 0.48,
   });
 
   const blocks = normalizeBlocks(parsed.blocks);
@@ -578,6 +611,8 @@ export async function generateSolutionWithGemini(
     discipline: resolvedDiscipline,
     auditPassApplied: false,
     humanizedPassApplied: false,
+    autoDivergenceApplied: false,
+    dnaLabel: summarizeDnaLabel(dna),
     verifiedQuestionsCount:
       typeof parsed.verifiedQuestionsCount === "number"
         ? parsed.verifiedQuestionsCount
@@ -586,11 +621,12 @@ export async function generateSolutionWithGemini(
     studyGuide: normalizeStudyGuide(parsed.studyGuide),
   };
 
-  const solution: SolutionDocument = {
+  let solution: SolutionDocument = {
     title: parsed.title || `حل ${order.assignmentTitle}`,
     includeCoverPage: order.includeCoverPage,
     styleProfile: chosenStyle,
     docxTheme: chosenTheme,
+    dna,
     qualityMeta,
     coverMeta: {
       university: order.university,
@@ -602,6 +638,70 @@ export async function generateSolutionWithGemini(
     blocks,
     updatedAt: new Date().toISOString(),
   };
+
+  // Closed-Loop Auto-Divergence Guard (< 20% ceiling across ALL cohort peers!)
+  if (peers.length > 0) {
+    const simBefore = evaluateAgainstCohort(solution, peers);
+    solution.qualityMeta!.cohortMaxSimilarity = simBefore.maxSimilarity;
+
+    if (
+      simBefore.maxSimilarity >= AUTO_DIVERGE_THRESHOLD &&
+      simBefore.topSharedPhrases.length > 0
+    ) {
+      try {
+        const divergeSystem = buildSurgicalDivergencePrompt({
+          dna,
+          sharedPhrases: simBefore.topSharedPhrases,
+          hotCohortPhrases: corpus.hotCohortPhrases,
+          extraInstruction: options.extraInstruction,
+        });
+        const draftJson = JSON.stringify({
+          title: solution.title,
+          blocks: stripBlockIds(solution.blocks),
+          studyGuide: solution.qualityMeta?.studyGuide,
+        });
+        const divRes = await callGeminiJsonWithFallback({
+          apiKey,
+          systemText: divergeSystem,
+          userParts: [
+            {
+              text: `المقياس: ${order.moduleName} | النشاط: ${order.assignmentTitle}\n\nالوثيقة المطلوب فك تشابهها جراحيا مع إبقاء كافة المعادلات والأرقام والجداول مطابقة 100%:\n${draftJson}`,
+            },
+          ],
+          preferredModel: options.preferredModel,
+          temperature: 0.65,
+        });
+        if (divRes.parsed.blocks && divRes.parsed.blocks.length > 0) {
+          const candidate: SolutionDocument = {
+            ...solution,
+            title: divRes.parsed.title || solution.title,
+            blocks: normalizeBlocks(divRes.parsed.blocks),
+            updatedAt: new Date().toISOString(),
+          };
+          const simAfter = evaluateAgainstCohort(candidate, peers);
+          if (simAfter.maxSimilarity < simBefore.maxSimilarity) {
+            solution = {
+              ...candidate,
+              qualityMeta: {
+                ...solution.qualityMeta!,
+                autoDivergenceApplied: true,
+                cohortMaxSimilarity: simAfter.maxSimilarity,
+                studyGuide: normalizeStudyGuide(
+                  divRes.parsed.studyGuide,
+                  solution.qualityMeta?.studyGuide
+                ),
+                auditNotes: [
+                  `تم تفعيل فك التشابه الآلي للدفعة: انخفض التشابه من ${simBefore.maxSimilarity}% إلى ${simAfter.maxSimilarity}%.`,
+                ],
+              },
+            };
+          }
+        }
+      } catch {
+        // Non-fatal: keep valid Stage-1 solution if divergence pass fails
+      }
+    }
+  }
 
   return { solution, usedModel };
 }
@@ -636,6 +736,22 @@ export async function refineSolutionWithGemini(
     options.discipline ?? current.qualityMeta?.discipline
   );
 
+  const peers = await listPeersForModule(order);
+  const corpus = analyzeCohortCorpus(peers);
+  const dna =
+    options.mode === "surgical_diverge"
+      ? allocateUniqueDNA(
+          `${order.id}-${Date.now()}`,
+          corpus.usedProseSignatures,
+          corpus.usedVisualSignatures
+        )
+      : current.dna ??
+        allocateUniqueDNA(
+          `${order.id}-${order.trackingCode}`,
+          corpus.usedProseSignatures,
+          corpus.usedVisualSignatures
+        );
+
   const currentDraftJson = JSON.stringify({
     title: current.title,
     blocks: stripBlockIds(current.blocks),
@@ -645,6 +761,7 @@ export async function refineSolutionWithGemini(
   let systemText = "";
   let userParts: Array<Record<string, unknown>> = [];
   let temperature = 0.35;
+  let simBeforeVal: number | undefined;
 
   if (options.mode === "deepen_and_audit") {
     systemText = buildStage2AuditPrompt({
@@ -658,11 +775,30 @@ export async function refineSolutionWithGemini(
       text: `مسودة الحل الحالية (المرحلة الأولى) المطلوب تدقيقها حسابيا ومنهجيا وتعميقها ومقارنتها بملفات التمرين والمراجع أعلاه:\n${currentDraftJson}`,
     });
     temperature = 0.28;
+  } else if (options.mode === "surgical_diverge") {
+    const simBefore = evaluateAgainstCohort(current, peers);
+    simBeforeVal = simBefore.maxSimilarity;
+    systemText = buildSurgicalDivergencePrompt({
+      dna,
+      sharedPhrases:
+        simBefore.topSharedPhrases.length > 0
+          ? simBefore.topSharedPhrases
+          : corpus.hotCohortPhrases,
+      hotCohortPhrases: corpus.hotCohortPhrases,
+      extraInstruction: options.extraInstruction,
+    });
+    userParts = [
+      {
+        text: `المقياس: ${order.moduleName} | النشاط: ${order.assignmentTitle}\n\nوثيقة الحل الحالية (أعد صياغة العبارات المتقاطعة مع الدفعة بأسلوب مستقل مع تثبيت كافة المعادلات والأرقام والجداول 100%):\n${currentDraftJson}`,
+      },
+    ];
+    temperature = 0.68;
   } else if (options.mode === "humanize_academic") {
     const siblingSnippets = await collectSiblingSnippets(order);
     systemText = buildStage2HumanizePrompt({
       styleId: chosenStyle,
-      siblingSnippets,
+      siblingSnippets:
+        corpus.recentOpenings.length > 0 ? corpus.recentOpenings : siblingSnippets,
       extraInstruction: options.extraInstruction,
     });
     userParts = [
@@ -700,6 +836,26 @@ export async function refineSolutionWithGemini(
       ? normalizeBlocks(parsed.blocks)
       : current.blocks;
 
+  const candidateSolution: SolutionDocument = {
+    ...current,
+    title: parsed.title || current.title,
+    styleProfile: chosenStyle,
+    dna,
+    blocks: updatedBlocks,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const simAfter = peers.length > 0 ? evaluateAgainstCohort(candidateSolution, peers) : null;
+  if (
+    options.mode === "surgical_diverge" &&
+    simAfter &&
+    typeof simBeforeVal === "number"
+  ) {
+    newNotes.unshift(
+      `فك التشابه الجراحي: تغير أعلى تشابه مع الدفعة من ${simBeforeVal}% إلى ${simAfter.maxSimilarity}% (بصمة جديدة: ${summarizeDnaLabel(dna)}).`
+    );
+  }
+
   const prevMeta = current.qualityMeta;
   const mergedMeta: QualityAuditMeta = {
     discipline: resolvedDiscipline,
@@ -711,6 +867,12 @@ export async function refineSolutionWithGemini(
       options.mode === "humanize_academic"
         ? true
         : Boolean(prevMeta?.humanizedPassApplied),
+    autoDivergenceApplied:
+      options.mode === "surgical_diverge"
+        ? true
+        : Boolean(prevMeta?.autoDivergenceApplied),
+    cohortMaxSimilarity: simAfter?.maxSimilarity ?? prevMeta?.cohortMaxSimilarity,
+    dnaLabel: summarizeDnaLabel(dna),
     verifiedQuestionsCount:
       typeof parsed.verifiedQuestionsCount === "number"
         ? parsed.verifiedQuestionsCount
@@ -723,12 +885,8 @@ export async function refineSolutionWithGemini(
   };
 
   const solution: SolutionDocument = {
-    ...current,
-    title: parsed.title || current.title,
-    styleProfile: chosenStyle,
+    ...candidateSolution,
     qualityMeta: mergedMeta,
-    blocks: updatedBlocks,
-    updatedAt: new Date().toISOString(),
   };
 
   return { solution, usedModel, auditNotes: mergedMeta.auditNotes ?? [] };
