@@ -53,6 +53,23 @@ interface SimilarityReport {
 
 const THEME_LIST = Object.values(DOCX_THEMES);
 
+async function safeReadJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    if (res.status === 504 || text.includes("FUNCTION_INVOCATION_TIMEOUT")) {
+      throw new Error(
+        "استغرق نموذج الذكاء الاصطناعي وقتا أطول من الحد المسموح به في الخادم (504). أعد المحاولة الآن أو جرّب اختيار Gemini 3.8 Flash / 3.5 Flash Lite مؤقتا."
+      );
+    }
+    throw new Error(
+      `استجابة غير متوقعة من الخادم (${res.status}): ${text.slice(0, 140)}`
+    );
+  }
+}
+
 export default function AdminOrderWorkspacePage({
   params,
 }: {
@@ -151,12 +168,13 @@ export default function AdminOrderWorkspacePage({
           solution: solutionToSave,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "فشل الحفظ");
-      setOrder(data.order);
-      setStatus(data.order.status);
-      setSolution(data.order.solution);
-      if (data.order.solution) {
+      const data = await safeReadJson(res);
+      if (!res.ok) throw new Error(String(data.error || "فشل الحفظ"));
+      const savedOrder = data.order as StudentOrder;
+      setOrder(savedOrder);
+      setStatus(savedOrder.status);
+      setSolution(savedOrder.solution);
+      if (savedOrder.solution) {
         void loadSimilarity(order.id);
       }
       setMessage({
@@ -197,25 +215,27 @@ export default function AdminOrderWorkspacePage({
           discipline,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "فشل توليد الحل آليا.");
-      setOrder(data.order);
-      setSolution(data.order.solution);
-      setStatus(data.order.status);
-      if (data.order.solution?.styleProfile) {
-        setStyleProfile(data.order.solution.styleProfile);
+      const data = await safeReadJson(res);
+      if (!res.ok) throw new Error(String(data.error || "فشل توليد الحل آليا."));
+      const updatedOrder = data.order as StudentOrder;
+      const usedModel = String(data.usedModel || selectedModel);
+      setOrder(updatedOrder);
+      setSolution(updatedOrder.solution);
+      setStatus(updatedOrder.status);
+      if (updatedOrder.solution?.styleProfile) {
+        setStyleProfile(updatedOrder.solution.styleProfile);
       }
-      if (data.order.solution?.docxTheme) {
-        setDocxTheme(data.order.solution.docxTheme);
+      if (updatedOrder.solution?.docxTheme) {
+        setDocxTheme(updatedOrder.solution.docxTheme);
       }
-      if (data.order.solution?.qualityMeta?.discipline) {
-        setDiscipline(data.order.solution.qualityMeta.discipline);
+      if (updatedOrder.solution?.qualityMeta?.discipline) {
+        setDiscipline(updatedOrder.solution.qualityMeta.discipline);
       }
       setActiveTab("preview");
       void loadSimilarity(order.id);
       setMessage({
         type: "ok",
-        text: `تم توليد مسودة المرحلة الأولى عبر (${data.usedModel || selectedModel}). يمكنك الآن تشغيل «التدقيق والتعميق الأكاديمي (المرحلة 2)» لرفع الجودة لأقصى حد.`,
+        text: `تم توليد مسودة المرحلة الأولى عبر (${usedModel}). يمكنك الآن تشغيل «التدقيق والتعميق الأكاديمي (المرحلة 2)» لرفع الجودة لأقصى حد.`,
       });
     } catch (err) {
       setMessage({
@@ -243,10 +263,12 @@ export default function AdminOrderWorkspacePage({
           discipline,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "تعذر تنفيذ مرحلة التحسين.");
-      setOrder(data.order);
-      setSolution(data.order.solution);
+      const data = await safeReadJson(res);
+      if (!res.ok) throw new Error(String(data.error || "تعذر تنفيذ مرحلة التحسين."));
+      const updatedOrder = data.order as StudentOrder;
+      const usedModel = String(data.usedModel || selectedModel);
+      setOrder(updatedOrder);
+      setSolution(updatedOrder.solution);
       setActiveTab("preview");
       void loadSimilarity(order.id);
       const label =
@@ -257,7 +279,7 @@ export default function AdminOrderWorkspacePage({
           : "تم تحديث دليل الفهم والمناقشة للطالب بنجاح";
       setMessage({
         type: "ok",
-        text: `${label} عبر النموذج (${data.usedModel || selectedModel}).`,
+        text: `${label} عبر النموذج (${usedModel}).`,
       });
     } catch (err) {
       setMessage({

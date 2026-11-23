@@ -4,7 +4,7 @@ import { isAdminAuthenticated } from "@/lib/auth";
 import { generateSolutionWithGemini } from "@/lib/gemini-solver";
 import type { AcademicDiscipline, DocxThemeId, StyleProfileId } from "@/types/order";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function POST(

@@ -173,18 +173,21 @@ async function buildOrderAttachmentParts(
 
   parts.push({ text: contextLines });
 
-  for (const meta of order.files) {
-    const buf = await readUploadedFileBuffer(meta.storedName, meta.blobUrl);
-    if (!buf) continue;
-    const label =
-      meta.category === "exercise"
-        ? `ملف أسئلة التمرين المرفق (${meta.originalName}):`
-        : `ملف مرجع/درس المقياس المرفق (${meta.originalName}):`;
+  // Fetch & upload attachments in parallel to minimize serverless latency
+  const filePartGroups = await Promise.all(
+    order.files.map(async (meta): Promise<Array<Record<string, unknown>>> => {
+      const buf = await readUploadedFileBuffer(meta.storedName, meta.blobUrl);
+      if (!buf) return [];
+      const label =
+        meta.category === "exercise"
+          ? `ملف أسئلة التمرين المرفق (${meta.originalName}):`
+          : `ملف مرجع/درس المقياس المرفق (${meta.originalName}):`;
 
-    if (meta.mimeType === "text/plain" || meta.mimeType === "text/csv") {
-      parts.push({ text: `${label}\n${buf.toString("utf-8").slice(0, 60000)}` });
-    } else if (SUPPORTED_INLINE_MIMES.has(meta.mimeType)) {
-      parts.push({ text: label });
+      if (meta.mimeType === "text/plain" || meta.mimeType === "text/csv") {
+        return [{ text: `${label}\n${buf.toString("utf-8").slice(0, 60000)}` }];
+      }
+      if (!SUPPORTED_INLINE_MIMES.has(meta.mimeType)) return [];
+
       if (buf.length > 2 * 1024 * 1024) {
         const fileUri = await uploadToGeminiFilesApi(
           apiKey,
@@ -193,29 +196,29 @@ async function buildOrderAttachmentParts(
           meta.originalName
         );
         if (fileUri) {
-          parts.push({
-            fileData: {
-              mimeType: meta.mimeType,
-              fileUri,
-            },
-          });
-        } else if (buf.length <= 15 * 1024 * 1024) {
-          parts.push({
-            inlineData: {
-              mimeType: meta.mimeType,
-              data: buf.toString("base64"),
-            },
-          });
+          return [
+            { text: label },
+            { fileData: { mimeType: meta.mimeType, fileUri } },
+          ];
         }
-      } else {
-        parts.push({
-          inlineData: {
-            mimeType: meta.mimeType,
-            data: buf.toString("base64"),
-          },
-        });
+        if (buf.length <= 15 * 1024 * 1024) {
+          return [
+            { text: label },
+            { inlineData: { mimeType: meta.mimeType, data: buf.toString("base64") } },
+          ];
+        }
+        return [];
       }
-    }
+
+      return [
+        { text: label },
+        { inlineData: { mimeType: meta.mimeType, data: buf.toString("base64") } },
+      ];
+    })
+  );
+
+  for (const group of filePartGroups) {
+    parts.push(...group);
   }
 
   return parts;
@@ -273,11 +276,19 @@ async function callGeminiJsonWithFallback(params: {
       modelName
     )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-    response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: requestPayload,
-    });
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: requestPayload,
+        signal: AbortSignal.timeout(95_000),
+      });
+    } catch (err) {
+      lastErrorText =
+        err instanceof Error ? err.message : "Timeout waiting for Gemini";
+      response = null;
+      continue;
+    }
 
     if (response.ok) {
       usedModel = modelName;

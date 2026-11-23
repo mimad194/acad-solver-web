@@ -8,7 +8,7 @@ import type {
   StyleProfileId,
 } from "@/types/order";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 const ALLOWED_MODES = new Set<RefineMode>([
