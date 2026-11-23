@@ -328,14 +328,126 @@ async function callGeminiJsonWithFallback(params: {
     throw new Error("لم يُرجع نموذج الذكاء الاصطناعي أي محتوى نصي.");
   }
 
-  const cleaned = rawText
+  const parsed = safeParseGeminiJson(rawText);
+  return { parsed, usedModel };
+}
+
+const LATEX_ESCAPE_COLLISION_RE =
+  /^(?:beta|bar|binom|big|bigg|bm|bf|boxed|bullet|frac|forall|flat|times|text|textbf|textit|theta|tilde|tau|to|top|triangle|rho|right|rangle|rightarrow|Rightarrow|neq|nu|nabla|not|norm|ni)(?![a-zA-Z])/;
+
+function repairJsonEscapes(input: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = false;
+      out += ch;
+      continue;
+    }
+
+    if (ch === "\n") {
+      out += "\\n";
+      continue;
+    }
+    if (ch === "\r") {
+      out += "\\r";
+      continue;
+    }
+    if (ch === "\t") {
+      out += "\\t";
+      continue;
+    }
+
+    if (ch === "\\") {
+      const next = input[i + 1];
+      if (next === undefined) {
+        out += "\\\\";
+        continue;
+      }
+      if (next === "\\") {
+        out += "\\\\";
+        i++;
+        continue;
+      }
+      if (next === '"' || next === "/") {
+        out += "\\" + next;
+        i++;
+        continue;
+      }
+      if (next === "u" && /^[0-9a-fA-F]{4}$/.test(input.slice(i + 2, i + 6))) {
+        out += input.slice(i, i + 6);
+        i += 5;
+        continue;
+      }
+      if (
+        next === "b" ||
+        next === "f" ||
+        next === "n" ||
+        next === "r" ||
+        next === "t"
+      ) {
+        const ahead = input.slice(i + 1, i + 16);
+        if (LATEX_ESCAPE_COLLISION_RE.test(ahead)) {
+          out += "\\\\" + next;
+        } else {
+          out += "\\" + next;
+        }
+        i++;
+        continue;
+      }
+      // Any other \X inside JSON string (e.g. \sum, \hat, \approx, \%, \{, \_) is invalid JSON -> double-escape it
+      out += "\\\\" + next;
+      i++;
+      continue;
+    }
+
+    const code = ch.charCodeAt(0);
+    if (code < 0x20) {
+      out += `\\u${code.toString(16).padStart(4, "0")}`;
+      continue;
+    }
+
+    out += ch;
+  }
+  return out;
+}
+
+function safeParseGeminiJson(rawText: string): RawGeminiJson {
+  let cleaned = rawText
     .trim()
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
-    .replace(/\s*```$/, "");
+    .replace(/\s*```$/, "")
+    .trim();
 
-  const parsed = JSON.parse(cleaned) as RawGeminiJson;
-  return { parsed, usedModel };
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+
+  // Always run LaTeX-aware escape repair so both invalid escapes (\sum, \hat, \%)
+  // and silently corrupted LaTeX escapes (\frac, \beta, \times, \bar) are fixed safely.
+  const repaired = repairJsonEscapes(cleaned);
+  try {
+    return JSON.parse(repaired) as RawGeminiJson;
+  } catch {
+    // Secondary fallback: strip trailing commas before } or ]
+    const noTrailingCommas = repaired.replace(/,\s*([}\]])/g, "$1");
+    try {
+      return JSON.parse(noTrailingCommas) as RawGeminiJson;
+    } catch {
+      // Last attempt: raw JSON.parse in case original was valid
+      return JSON.parse(cleaned) as RawGeminiJson;
+    }
+  }
 }
 
 function normalizeBlocks(rawBlocks?: Array<Record<string, unknown>>): DocumentBlock[] {
