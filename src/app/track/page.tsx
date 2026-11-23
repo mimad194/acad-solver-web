@@ -755,7 +755,7 @@ function TrackContent() {
                     {order.solution.qualityMeta.auditPassApplied && (
                       <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
                         <ShieldCheck className="w-3.5 h-3.5" />
-                        مدقّق حسابيا ومنهجيا على مرحلتين
+                        مُراجع ومدقّق حسابيا ومنهجيا
                       </span>
                     )}
                     <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-500">
