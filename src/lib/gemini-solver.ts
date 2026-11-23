@@ -39,27 +39,65 @@ const SUPPORTED_INLINE_MIMES = new Set([
   "text/csv",
 ]);
 
-const DEFAULT_MODEL_PRIORITY = [
+export const DEFAULT_MODEL_PRIORITY = [
   "gemini-4-hydrogen",
   "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
 ];
 
 const MODEL_DISPLAY_PATTERNS: Record<string, string[]> = {
   "gemini-4-hydrogen": ["gemini 4 hydrogen", "gemini-4-hydrogen"],
   "gemini-3.8-flash": ["gemini 3.8 flash", "gemini-3.8-flash"],
+  "gemini-3.7-flash": ["gemini 3.7 flash", "gemini-3.7-flash"],
+  "gemini-3.6-flash": ["gemini 3.6 flash", "gemini-3.6-flash"],
+  "gemini-3.5-flash": ["gemini 3.5 flash", "gemini-3.5-flash"],
   "gemini-3.5-flash-lite": ["gemini 3.5 flash lite", "gemini-3.5-flash-lite"],
+  "gemini-3.1-flash-lite": ["gemini 3.1 flash lite", "gemini-3.1-flash-lite"],
+  "gemini-2.5-pro": ["gemini 2.5 pro", "gemini-2.5-pro"],
+  "gemini-2.5-flash": ["gemini 2.5 flash", "gemini-2.5-flash"],
+  "gemini-2.5-flash-lite": ["gemini 2.5 flash lite", "gemini-2.5-flash-lite"],
 };
+
+const EXCLUDED_MODEL_RE =
+  /embedding|imagen|veo|tts|audio|live|robotics|computer-use|aqa|learnlm|vision-only|nano/i;
+
+function scoreDiscoveredGeminiModel(id: string): number {
+  const low = id.toLowerCase();
+  let score = 0;
+  const verMatch = low.match(/gemini-(\d+)(?:\.(\d+))?/);
+  if (verMatch) {
+    score += Number(verMatch[1]) * 1000 + Number(verMatch[2] ?? 0) * 100;
+  }
+  if (low.includes("pro") || low.includes("hydrogen") || low.includes("argon") || low.includes("carbon") || low.includes("neon")) {
+    score += 40;
+  } else if (low.includes("flash") && !low.includes("lite")) {
+    score += 25;
+  } else if (low.includes("lite")) {
+    score += 10;
+  }
+  if (low.includes("exp")) score -= 15;
+  if (low.includes("preview")) score -= 5;
+  return score;
+}
 
 async function discoverExactModelIds(
   apiKey: string,
-  preferredList: string[]
+  preferredList: string[],
+  fetchImpl: typeof fetch = fetch
 ): Promise<string[]> {
   try {
-    const res = await fetch(
+    const res = await fetchImpl(
       `https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(
         apiKey
-      )}`
+      )}`,
+      { signal: AbortSignal.timeout(12_000) }
     );
     if (!res.ok) return [];
     const data = (await res.json()) as {
@@ -69,9 +107,12 @@ async function discoverExactModelIds(
         supportedGenerationMethods?: string[];
       }>;
     };
-    const usable = (data.models ?? []).filter((m) =>
-      m.supportedGenerationMethods?.includes("generateContent")
-    );
+    const usable = (data.models ?? []).filter((m) => {
+      const id = (m.name ?? "").replace(/^models\//, "");
+      if (!id || !id.toLowerCase().startsWith("gemini-")) return false;
+      if (EXCLUDED_MODEL_RE.test(id)) return false;
+      return Boolean(m.supportedGenerationMethods?.includes("generateContent"));
+    });
 
     const matched: string[] = [];
     for (const pref of preferredList) {
@@ -95,7 +136,15 @@ async function discoverExactModelIds(
         }
       }
     }
-    return matched;
+
+    // Append all other live Gemini generateContent models ranked by capability
+    // so a 503 spike on primary models still falls back to healthy live models!
+    const remaining = usable
+      .map((m) => (m.name ?? "").replace(/^models\//, ""))
+      .filter((id) => id && !matched.includes(id))
+      .sort((a, b) => scoreDiscoveredGeminiModel(b) - scoreDiscoveredGeminiModel(a));
+
+    return [...matched, ...remaining];
   } catch {
     return [];
   }
@@ -281,14 +330,35 @@ interface RawGeminiJson {
   };
 }
 
-async function callGeminiJsonWithFallback(params: {
+const TRANSIENT_RETRYABLE_STATUSES = new Set([500, 502, 503, 504]);
+const FALLBACK_CONTINUE_STATUSES = new Set([404, 429, 500, 502, 503, 504]);
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function callGeminiJsonWithFallback(params: {
   apiKey: string;
   systemText: string;
   userParts: Array<Record<string, unknown>>;
   preferredModel?: string;
   temperature?: number;
-}): Promise<{ parsed: RawGeminiJson; usedModel: string }> {
-  const { apiKey, systemText, userParts, preferredModel, temperature = 0.4 } = params;
+  fetchImpl?: typeof fetch;
+  sleepImpl?: (ms: number) => Promise<void>;
+  totalBudgetMs?: number;
+  perAttemptTimeoutMs?: number;
+}): Promise<{ parsed: RawGeminiJson; usedModel: string; attempts: string[] }> {
+  const {
+    apiKey,
+    systemText,
+    userParts,
+    preferredModel,
+    temperature = 0.4,
+    fetchImpl = fetch,
+    sleepImpl = defaultSleep,
+    totalBudgetMs = 240_000,
+    perAttemptTimeoutMs = 65_000,
+  } = params;
 
   const firstChoice =
     preferredModel?.trim() ||
@@ -310,82 +380,154 @@ async function callGeminiJsonWithFallback(params: {
   const candidateModels = Array.from(
     new Set([firstChoice, ...DEFAULT_MODEL_PRIORITY])
   );
+  const deadline = Date.now() + totalBudgetMs;
+  const attempts: string[] = [];
+  const transientCandidates: string[] = [];
   let discoveredOnce = false;
-  let response: Response | null = null;
+  let lastStatus = 500;
   let lastErrorText = "";
-  let usedModel = firstChoice;
 
-  for (let i = 0; i < candidateModels.length; i++) {
-    const modelName = candidateModels[i];
+  const tryModelOnce = async (
+    modelName: string
+  ): Promise<
+    | { ok: true; parsed: RawGeminiJson; usedModel: string }
+    | { ok: false; status: number; fatal: boolean; transient: boolean; errorText: string }
+  > => {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 3_000) {
+      return {
+        ok: false,
+        status: 504,
+        fatal: true,
+        transient: false,
+        errorText: "تجاوز وقت المعالجة الإجمالي الحد الأقصى للخادم.",
+      };
+    }
+
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
       modelName
     )}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
+    let response: Response;
     try {
-      response = await fetch(endpoint, {
+      const timeoutMs = Math.min(perAttemptTimeoutMs, Math.max(5_000, remainingMs - 1_500));
+      response = await fetchImpl(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: requestPayload,
-        signal: AbortSignal.timeout(95_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      lastErrorText =
-        err instanceof Error ? err.message : "Timeout waiting for Gemini";
-      response = null;
-      continue;
+      const msg = err instanceof Error ? err.message : "Timeout waiting for Gemini";
+      attempts.push(`${modelName}:timeout`);
+      return { ok: false, status: 504, fatal: false, transient: true, errorText: msg };
     }
 
-    if (response.ok) {
-      usedModel = modelName;
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      attempts.push(`${modelName}:${response.status}`);
+      const canFallback = FALLBACK_CONTINUE_STATUSES.has(response.status);
+      return {
+        ok: false,
+        status: response.status,
+        fatal: !canFallback,
+        transient: TRANSIENT_RETRYABLE_STATUSES.has(response.status),
+        errorText: errText,
+      };
+    }
+
+    let payload: {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    try {
+      payload = (await response.json()) as typeof payload;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Invalid HTTP JSON body";
+      attempts.push(`${modelName}:bad_body`);
+      return { ok: false, status: 502, fatal: false, transient: true, errorText: msg };
+    }
+
+    const rawText = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!rawText) {
+      attempts.push(`${modelName}:empty`);
+      return {
+        ok: false,
+        status: 502,
+        fatal: false,
+        transient: true,
+        errorText: "لم يُرجع النموذج محتوى نصياً.",
+      };
+    }
+
+    try {
+      const parsed = safeParseGeminiJson(rawText);
+      attempts.push(`${modelName}:200`);
+      return { ok: true, parsed, usedModel: modelName };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Malformed JSON response";
+      attempts.push(`${modelName}:bad_json`);
+      return { ok: false, status: 502, fatal: false, transient: true, errorText: msg };
+    }
+  };
+
+  // Pass 1: Walk quality-first chain + dynamically discover any other live Gemini models on 404/503/429
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelName = candidateModels[i];
+    const res = await tryModelOnce(modelName);
+    if (res.ok) {
+      return { parsed: res.parsed, usedModel: res.usedModel, attempts };
+    }
+
+    lastStatus = res.status;
+    lastErrorText = res.errorText;
+
+    if (res.transient && !transientCandidates.includes(modelName)) {
+      transientCandidates.push(modelName);
+    }
+
+    if (res.fatal) {
       break;
     }
 
-    lastErrorText = await response.text();
-
-    if (response.status === 404 && !discoveredOnce) {
+    // Trigger live model discovery from /v1beta/models once whenever a model 404s OR
+    // once our first 2 primary candidates fail with 503/429.
+    // Prioritize LIVE discovered models immediately next and prune unvisited non-existent aliases!
+    if (!discoveredOnce && (res.status === 404 || i >= 1)) {
       discoveredOnce = true;
-      const discovered = await discoverExactModelIds(apiKey, [
-        firstChoice,
-        ...DEFAULT_MODEL_PRIORITY,
-      ]);
-      for (let dIdx = discovered.length - 1; dIdx >= 0; dIdx--) {
-        const exactId = discovered[dIdx];
-        if (!candidateModels.includes(exactId)) {
-          candidateModels.splice(i + 1, 0, exactId);
-        }
+      const discovered = await discoverExactModelIds(
+        apiKey,
+        [firstChoice, ...DEFAULT_MODEL_PRIORITY],
+        fetchImpl
+      );
+      if (discovered.length > 0) {
+        const triedSet = new Set(candidateModels.slice(0, i + 1));
+        const liveNext = discovered.filter((id) => !triedSet.has(id));
+        candidateModels.splice(i + 1, candidateModels.length - (i + 1), ...liveNext);
       }
     }
+  }
 
-    if (
-      response.status === 404 ||
-      response.status === 429 ||
-      response.status === 500 ||
-      response.status === 502 ||
-      response.status === 503 ||
-      response.status === 504
-    ) {
-      continue;
+  // Pass 2: Resilience retry wave with backoff for transient 503/5xx spikes
+  // Google explicitly notes 503 demand spikes are usually temporary (clear within seconds).
+  if (transientCandidates.length > 0 && deadline - Date.now() > 15_000) {
+    await sleepImpl(2_500);
+    for (const modelName of transientCandidates.slice(0, 4)) {
+      if (deadline - Date.now() <= 5_000) break;
+      const res = await tryModelOnce(modelName);
+      if (res.ok) {
+        return { parsed: res.parsed, usedModel: res.usedModel, attempts };
+      }
+      lastStatus = res.status;
+      lastErrorText = res.errorText;
+      if (res.fatal) break;
+      await sleepImpl(1_500);
     }
-    break;
   }
 
-  if (!response || !response.ok) {
-    throw new Error(
-      `فشل الاتصال بـ Gemini API (${response?.status ?? 500}): ${lastErrorText.slice(0, 350)}`
-    );
-  }
-
-  const payload = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  };
-
-  const rawText = payload.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) {
-    throw new Error("لم يُرجع نموذج الذكاء الاصطناعي أي محتوى نصي.");
-  }
-
-  const parsed = safeParseGeminiJson(rawText);
-  return { parsed, usedModel };
+  const summary = attempts.slice(0, 12).join(" ← ");
+  throw new Error(
+    `فشل الاتصال بـ Gemini API (${lastStatus}) بعد تجربة [${summary}]: ${lastErrorText.slice(0, 260)}`
+  );
 }
 
 const LATEX_ESCAPE_COLLISION_RE =
