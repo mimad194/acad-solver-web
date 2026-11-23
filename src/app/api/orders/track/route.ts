@@ -4,6 +4,7 @@ import {
   getPublicAppConfigAsync,
   isOrderPaymentUnlockedAsync,
 } from "@/lib/pricing-config";
+import { getReferralStatsForOrder } from "@/lib/promo-referral";
 import type { SolutionDocument } from "@/types/order";
 
 export const dynamic = "force-dynamic";
@@ -52,8 +53,11 @@ export async function GET(req: Request) {
     hasStudyGuide = false;
   }
 
+  const referralStats = await getReferralStatsForOrder(order);
+
   return NextResponse.json({
     config,
+    referralStats,
     order: {
       id: order.id,
       trackingCode: order.trackingCode,
@@ -66,6 +70,10 @@ export async function GET(req: Request) {
       adminNote: order.adminNote,
       includeCoverPage: order.includeCoverPage,
       packageId: order.packageId ?? "premium",
+      originalPriceDzd: order.originalPriceDzd ?? null,
+      discountPercent: order.discountPercent ?? 0,
+      promoCodeUsed: order.promoCodeUsed ?? null,
+      referralCode: order.referralCode ?? null,
       priceDzd: order.priceDzd ?? null,
       paymentStatus: order.paymentStatus ?? "paid",
       paymentReceipt: order.paymentReceipt

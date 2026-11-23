@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { upload } from "@vercel/blob/client";
 import {
@@ -12,10 +12,13 @@ import {
   FileSpreadsheet,
   FileText,
   FileUp,
+  Gift,
   Library,
+  MessageCircle,
   Send,
   ShieldCheck,
   Sparkles,
+  Tag,
   Trash2,
   ArrowLeft,
 } from "lucide-react";
@@ -45,6 +48,7 @@ const FALLBACK_CONFIG: PublicAppConfig = {
   currency: "دج",
   cohortMaxSlots: 8,
   previewLockEnabled: true,
+  referral: { enabled: true, targetCount: 3, friendDiscountPercent: 10 },
   payment: { baridimobRip: "", ccpAccount: "", accountName: "" },
   supportWhatsapp: "",
   packages: [
@@ -113,12 +117,52 @@ export default function StudentOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [uploadStatus, setUploadStatus] = useState("");
   const [error, setError] = useState("");
+  const [promoInput, setPromoInput] = useState("");
+  const [referredByUrl, setReferredByUrl] = useState("");
+  const [validatingPromo, setValidatingPromo] = useState(false);
+  const [appliedDiscount, setAppliedDiscount] = useState<{
+    valid: boolean;
+    kind?: "promo" | "referral";
+    code: string;
+    discountPercent: number;
+    discountAmountDzd: number;
+    finalPriceDzd: number;
+    message: string;
+  } | null>(null);
   const [createdOrder, setCreatedOrder] = useState<{
     id: string;
     trackingCode: string;
+    referralCode?: string;
     priceDzd?: number;
+    discountPercent?: number;
   } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedRef, setCopiedRef] = useState(false);
+
+  const validateCode = useCallback(
+    async (rawCode: string, pkgId: PackageId) => {
+      const clean = rawCode.trim();
+      if (!clean) {
+        setAppliedDiscount(null);
+        return;
+      }
+      setValidatingPromo(true);
+      try {
+        const res = await fetch("/api/promo/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: clean, packageId: pkgId }),
+        });
+        const data = await res.json();
+        setAppliedDiscount(data);
+      } catch {
+        setAppliedDiscount(null);
+      } finally {
+        setValidatingPromo(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     fetch("/api/config", { cache: "no-store" })
@@ -129,7 +173,27 @@ export default function StudentOrderPage() {
         }
       })
       .catch(() => {});
-  }, []);
+
+    // Auto-read ?ref=REF-XXXX or ?promo=CODE from URL
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const refParam = sp.get("ref")?.trim() || "";
+      const promoParam = sp.get("promo")?.trim() || "";
+      if (refParam) setReferredByUrl(refParam);
+      const initialCode = promoParam || refParam;
+      if (initialCode) {
+        setPromoInput(initialCode);
+        void validateCode(initialCode, "premium");
+      }
+    }
+  }, [validateCode]);
+
+  useEffect(() => {
+    if (appliedDiscount?.valid && appliedDiscount.code) {
+      void validateCode(appliedDiscount.code, selectedPackageId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPackageId]);
 
   useEffect(() => {
     if (!specialtyId || specialtyId === "other") {
@@ -279,6 +343,8 @@ export default function StudentOrderPage() {
             includeCoverPage,
             strictReferencesOnly,
             packageId: selectedPackageId,
+            promoCode: appliedDiscount?.valid ? appliedDiscount.code : promoInput.trim(),
+            referredByCode: referredByUrl,
             uploadedFiles,
           }),
         });
@@ -299,13 +365,25 @@ export default function StudentOrderPage() {
         fd.append("includeCoverPage", String(includeCoverPage));
         fd.append("strictReferencesOnly", String(strictReferencesOnly));
         fd.append("packageId", selectedPackageId);
+        fd.append(
+          "promoCode",
+          appliedDiscount?.valid ? appliedDiscount.code : promoInput.trim()
+        );
+        if (referredByUrl) fd.append("referredByCode", referredByUrl);
         exerciseFiles.forEach((f) => fd.append("exerciseFiles", f));
         referenceFiles.forEach((f) => fd.append("referenceFiles", f));
         res = await fetch("/api/orders", { method: "POST", body: fd });
       }
 
       const rawText = await res.text();
-      let data: { id?: string; trackingCode?: string; priceDzd?: number; error?: string } = {};
+      let data: {
+        id?: string;
+        trackingCode?: string;
+        referralCode?: string;
+        priceDzd?: number;
+        discountPercent?: number;
+        error?: string;
+      } = {};
       try {
         data = JSON.parse(rawText);
       } catch {
@@ -323,7 +401,9 @@ export default function StudentOrderPage() {
       setCreatedOrder({
         id: data.id,
         trackingCode: data.trackingCode,
+        referralCode: data.referralCode,
         priceDzd: data.priceDzd ?? selectedPkg?.priceDzd,
+        discountPercent: data.discountPercent ?? 0,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "حدث خطأ غير متوقع.");
@@ -512,7 +592,15 @@ export default function StudentOrderPage() {
             </p>
             {typeof createdOrder.priceDzd === "number" && (
               <p className="text-xs font-bold text-navy-700 pt-1">
-                الباقة المختارة: {selectedPkg?.name} — المبلغ: {createdOrder.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+                الباقة المختارة: {selectedPkg?.name} — المبلغ النهائي:{" "}
+                {createdOrder.priceDzd === 0 ? (
+                  <span className="text-emerald-700 font-black">مجاني 100% ✓</span>
+                ) : (
+                  <>
+                    {createdOrder.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+                    {createdOrder.discountPercent ? ` (بعد خصم ${createdOrder.discountPercent}%)` : ""}
+                  </>
+                )}
               </p>
             )}
           </div>
@@ -530,6 +618,63 @@ export default function StudentOrderPage() {
               {copied ? "تم النسخ" : "نسخ الرمز"}
             </button>
           </div>
+
+          {/* Viral Referral Share Card right after order submission */}
+          {appConfig.referral?.enabled && createdOrder.referralCode && (
+            <div className="bg-gradient-to-l from-amber-50 to-emerald-50 border border-emerald-200 rounded-2xl p-4 text-right space-y-2.5">
+              <div className="flex items-center gap-2 font-extrabold text-sm text-emerald-900">
+                <Gift className="w-4 h-4 text-emerald-700 shrink-0" />
+                اربح نشاطاً مجانياً 100% عبر دعوة زملائك!
+              </div>
+              <p className="text-xs text-slate-700 leading-relaxed">
+                شارك رابط إحالتك الخاص في مجموعات الدفعة: يحصل كل زميل على خصم فوري{" "}
+                <strong>{appConfig.referral.friendDiscountPercent}%</strong>، وعند إتمام{" "}
+                <strong>{appConfig.referral.targetCount} إحالات مدفوعة</strong> يصدر لك كود مجاني{" "}
+                <strong>100%</strong> تلقائيا في صفحة التتبع!
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  dir="ltr"
+                  className="font-mono text-xs font-extrabold px-2.5 py-1.5 rounded-lg bg-white border border-emerald-200 text-emerald-900"
+                >
+                  {createdOrder.referralCode}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const url = `${window.location.origin}/?ref=${encodeURIComponent(
+                      createdOrder.referralCode!
+                    )}`;
+                    await navigator.clipboard.writeText(url);
+                    setCopiedRef(true);
+                    setTimeout(() => setCopiedRef(false), 2000);
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-navy-700 hover:bg-navy-600 text-white text-xs font-bold"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedRef ? "تم نسخ الرابط ✓" : "نسخ رابط الإحالة"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${window.location.origin}/?ref=${encodeURIComponent(
+                      createdOrder.referralCode!
+                    )}`;
+                    const msg = `السلام عليكم، أنصحكم بهذه المنصة لإعداد وتنسيق أنشطة UFC في ملف Word RTL أصلي وفق مطبوعات الأستاذ. استعملوا رابطي للحصول على تخفيض ${appConfig.referral.friendDiscountPercent}%:\n${url}`;
+                    window.open(
+                      `https://wa.me/?text=${encodeURIComponent(msg)}`,
+                      "_blank",
+                      "noopener,noreferrer"
+                    );
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  مشاركة على WhatsApp
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <Link
@@ -918,13 +1063,65 @@ export default function StudentOrderPage() {
             </label>
           </div>
 
+          {/* Promo Code & Referral Input */}
+          <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 space-y-2.5">
+            <label className="flex items-center gap-1.5 text-xs font-extrabold text-navy-800">
+              <Tag className="w-3.5 h-3.5 text-amber-600" />
+              هل لديك كود برومو (تخفيض حتى 100%) أو كود إحالة زميل؟
+            </label>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                dir="ltr"
+                value={promoInput}
+                onChange={(e) => {
+                  setPromoInput(e.target.value.toUpperCase());
+                  if (!e.target.value.trim()) setAppliedDiscount(null);
+                }}
+                placeholder="مثال: UFC40 أو FREE-XXXXX أو REF-XXXXX"
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-300 bg-white font-mono text-xs uppercase focus:outline-none focus:ring-2 focus:ring-navy-600"
+              />
+              <button
+                type="button"
+                disabled={validatingPromo || !promoInput.trim()}
+                onClick={() => validateCode(promoInput, selectedPackageId)}
+                className="px-4 py-2 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-50 text-white font-bold text-xs shrink-0"
+              >
+                {validatingPromo ? "جاري التحقق..." : "تطبيق الكود"}
+              </button>
+            </div>
+            {appliedDiscount && (
+              <p
+                className={`text-xs font-bold ${
+                  appliedDiscount.valid ? "text-emerald-700" : "text-red-600"
+                }`}
+              >
+                {appliedDiscount.valid ? "✓ " : "✕ "}
+                {appliedDiscount.message}
+              </p>
+            )}
+          </div>
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
-            <div className="text-xs text-slate-600">
-              الباقة المختارة:{" "}
-              <strong className="text-navy-800">{selectedPkg?.name}</strong>{" "}
-              <span className="inline-block mr-1 px-2 py-0.5 rounded-full bg-navy-50 text-navy-800 font-extrabold">
-                {selectedPkg?.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
-              </span>
+            <div className="text-xs text-slate-600 flex flex-wrap items-center gap-1.5">
+              <span>الباقة المختارة:</span>
+              <strong className="text-navy-800">{selectedPkg?.name}</strong>
+              {appliedDiscount?.valid && appliedDiscount.discountPercent > 0 ? (
+                <>
+                  <span className="line-through text-slate-400">
+                    {selectedPkg?.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+                  </span>
+                  <span className="inline-block px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-black">
+                    {appliedDiscount.finalPriceDzd === 0
+                      ? "مجاني 100% ✓"
+                      : `${appliedDiscount.finalPriceDzd.toLocaleString("fr-DZ")} ${appConfig.currency} (-${appliedDiscount.discountPercent}%)`}
+                  </span>
+                </>
+              ) : (
+                <span className="inline-block mr-1 px-2 py-0.5 rounded-full bg-navy-50 text-navy-800 font-extrabold">
+                  {selectedPkg?.priceDzd.toLocaleString("fr-DZ")} {appConfig.currency}
+                </span>
+              )}
             </div>
             <button
               type="submit"

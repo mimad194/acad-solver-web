@@ -79,6 +79,16 @@ export function getEnvAppConfig(): PublicAppConfig {
   const cohortMaxSlots = parsePositiveInt(process.env.COHORT_MAX_SLOTS, 8);
   const previewLockEnabled =
     (process.env.PREVIEW_LOCK_ENABLED ?? "true").trim().toLowerCase() !== "false";
+  const referralEnabled =
+    (process.env.REFERRAL_ENABLED ?? "true").trim().toLowerCase() !== "false";
+  const referralTargetCount = Math.max(
+    1,
+    parsePositiveInt(process.env.REFERRAL_TARGET_COUNT, 3)
+  );
+  const referralFriendDiscountPercent = Math.min(
+    100,
+    parsePositiveInt(process.env.REFERRAL_FRIEND_DISCOUNT_PERCENT, 10)
+  );
 
   let packages = buildDefaultPackages();
   const customJson = process.env.PRICING_PACKAGES_JSON?.trim();
@@ -100,6 +110,11 @@ export function getEnvAppConfig(): PublicAppConfig {
     packages,
     cohortMaxSlots,
     previewLockEnabled,
+    referral: {
+      enabled: referralEnabled,
+      targetCount: referralTargetCount,
+      friendDiscountPercent: referralFriendDiscountPercent,
+    },
     payment: {
       baridimobRip: process.env.PAYMENT_BARIDIMOB_RIP?.trim() || "",
       ccpAccount: process.env.PAYMENT_CCP_ACCOUNT?.trim() || "",
@@ -113,6 +128,11 @@ export interface StoredCommercialOverrides {
   currency?: string;
   previewLockEnabled?: boolean;
   supportWhatsapp?: string;
+  referral?: {
+    enabled?: boolean;
+    targetCount?: number;
+    friendDiscountPercent?: number;
+  };
   payment?: {
     baridimobRip?: string;
     ccpAccount?: string;
@@ -193,6 +213,24 @@ export async function getPublicAppConfigAsync(): Promise<PublicAppConfig> {
       typeof ov.previewLockEnabled === "boolean"
         ? ov.previewLockEnabled
         : base.previewLockEnabled,
+    referral: {
+      enabled:
+        typeof ov.referral?.enabled === "boolean"
+          ? ov.referral.enabled
+          : base.referral.enabled,
+      targetCount:
+        typeof ov.referral?.targetCount === "number" &&
+        Number.isFinite(ov.referral.targetCount) &&
+        ov.referral.targetCount >= 1
+          ? Math.round(ov.referral.targetCount)
+          : base.referral.targetCount,
+      friendDiscountPercent:
+        typeof ov.referral?.friendDiscountPercent === "number" &&
+        Number.isFinite(ov.referral.friendDiscountPercent) &&
+        ov.referral.friendDiscountPercent >= 0
+          ? Math.min(100, Math.round(ov.referral.friendDiscountPercent))
+          : base.referral.friendDiscountPercent,
+    },
     payment: {
       baridimobRip:
         ov.payment?.baridimobRip !== undefined

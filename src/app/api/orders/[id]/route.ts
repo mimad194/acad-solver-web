@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { deleteOrder, getOrderById, updateOrder } from "@/lib/store";
 import { isAdminAuthenticated } from "@/lib/auth";
+import { processReferralQualification } from "@/lib/promo-referral";
 import {
   OrderStatus,
   PackageId,
@@ -43,6 +44,7 @@ export async function PATCH(
     paymentStatus?: PaymentStatus;
   };
 
+  const before = await getOrderById(id);
   const updated = await updateOrder(id, (cur) => {
     const nextPaymentStatus = body.paymentStatus ?? cur.paymentStatus;
     const paidAt =
@@ -77,7 +79,13 @@ export async function PATCH(
   if (!updated) {
     return NextResponse.json({ error: "الطلب غير موجود" }, { status: 404 });
   }
-  return NextResponse.json({ order: updated });
+
+  let mintedReferralReward: string | null = null;
+  if (before?.paymentStatus !== "paid" && updated.paymentStatus === "paid") {
+    mintedReferralReward = await processReferralQualification(updated).catch(() => null);
+  }
+
+  return NextResponse.json({ order: updated, mintedReferralReward });
 }
 
 export async function DELETE(

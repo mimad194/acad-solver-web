@@ -7,19 +7,23 @@ import {
   CheckCircle2,
   Clock,
   FileEdit,
+  Gift,
   Inbox,
   Lock,
   LogOut,
+  Plus,
   RefreshCw,
   Save,
   Search,
   Settings,
+  Tag,
   Trash2,
   X,
 } from "lucide-react";
 import {
   OrderStatus,
   PaymentStatus,
+  PromoCodeEntry,
   PublicAppConfig,
   StudentOrder,
 } from "@/types/order";
@@ -48,9 +52,30 @@ export default function AdminDashboardPage() {
   const [query, setQuery] = useState("");
 
   const [showSettings, setShowSettings] = useState(false);
+  const [showPromos, setShowPromos] = useState(false);
   const [settingsConfig, setSettingsConfig] = useState<PublicAppConfig | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const [promos, setPromos] = useState<PromoCodeEntry[]>([]);
+  const [newPromoCode, setNewPromoCode] = useState("");
+  const [newPromoPct, setNewPromoPct] = useState("25");
+  const [newPromoMaxUses, setNewPromoMaxUses] = useState("0");
+  const [newPromoNote, setNewPromoNote] = useState("");
+  const [promoMsg, setPromoMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [savingPromo, setSavingPromo] = useState(false);
+
+  const loadPromos = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/promos", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { promos?: PromoCodeEntry[] };
+        setPromos(data.promos ?? []);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -86,10 +111,60 @@ export default function AdminDashboardPage() {
         if (d.authenticated) {
           void loadOrders();
           void loadSettings();
+          void loadPromos();
         }
       })
       .catch(() => setAuthChecked(true));
-  }, [loadOrders, loadSettings]);
+  }, [loadOrders, loadSettings, loadPromos]);
+
+  const handleCreatePromo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingPromo(true);
+    setPromoMsg(null);
+    try {
+      const res = await fetch("/api/admin/promos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: newPromoCode,
+          discountPercent: Number(newPromoPct),
+          maxUses: Number(newPromoMaxUses) || 0,
+          note: newPromoNote,
+          active: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "تعذر إنشاء الكود.");
+      setNewPromoCode("");
+      setNewPromoNote("");
+      setPromoMsg({ type: "ok", text: `تم إنشاء كود البرومو (${data.promo.code}) بنجاح!` });
+      void loadPromos();
+    } catch (err) {
+      setPromoMsg({
+        type: "err",
+        text: err instanceof Error ? err.message : "خطأ أثناء إنشاء الكود.",
+      });
+    } finally {
+      setSavingPromo(false);
+    }
+  };
+
+  const handleTogglePromo = async (code: string, active: boolean) => {
+    await fetch("/api/admin/promos", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, active: !active }),
+    });
+    void loadPromos();
+  };
+
+  const handleDeletePromo = async (code: string) => {
+    if (!confirm(`حذف كود البرومو ${code} نهائيا؟`)) return;
+    await fetch(`/api/admin/promos?code=${encodeURIComponent(code)}`, {
+      method: "DELETE",
+    });
+    void loadPromos();
+  };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,6 +179,7 @@ export default function AdminDashboardPage() {
           currency: settingsConfig.currency,
           previewLockEnabled: settingsConfig.previewLockEnabled,
           supportWhatsapp: settingsConfig.supportWhatsapp,
+          referral: settingsConfig.referral,
           payment: settingsConfig.payment,
           packages: settingsConfig.packages.map((p) => ({
             id: p.id,
@@ -148,6 +224,7 @@ export default function AdminDashboardPage() {
     setPassword("");
     loadOrders();
     loadSettings();
+    loadPromos();
   };
 
   const handleLogout = async () => {
@@ -261,6 +338,21 @@ export default function AdminDashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setShowPromos((prev) => !prev);
+              void loadPromos();
+            }}
+            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-colors ${
+              showPromos
+                ? "bg-emerald-700 text-white"
+                : "bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5" />
+            أكواد البرومو ({promos.length})
+          </button>
           <button
             type="button"
             onClick={() => {
@@ -491,6 +583,92 @@ export default function AdminDashboardPage() {
             </div>
           </div>
 
+          {/* Viral Referral Settings */}
+          <div className="p-4 rounded-xl bg-emerald-50/70 border border-emerald-200 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-extrabold text-emerald-900 flex items-center gap-1.5">
+                <Gift className="w-4 h-4 text-emerald-700" />
+                إعدادات نظام الإحالات الفيروسي (Referrals)
+              </p>
+              <label className="inline-flex items-center gap-2 text-xs font-bold text-emerald-900 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settingsConfig.referral?.enabled ?? true}
+                  onChange={(e) =>
+                    setSettingsConfig({
+                      ...settingsConfig,
+                      referral: {
+                        ...(settingsConfig.referral ?? {
+                          enabled: true,
+                          targetCount: 3,
+                          friendDiscountPercent: 10,
+                        }),
+                        enabled: e.target.checked,
+                      },
+                    })
+                  }
+                  className="w-4 h-4 accent-emerald-700"
+                />
+                تفعيل نظام الإحالات
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  عدد الإحالات المدفوعة المطلوب لنشاط مجاني 100%
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={settingsConfig.referral?.targetCount ?? 3}
+                  onChange={(e) =>
+                    setSettingsConfig({
+                      ...settingsConfig,
+                      referral: {
+                        ...(settingsConfig.referral ?? {
+                          enabled: true,
+                          targetCount: 3,
+                          friendDiscountPercent: 10,
+                        }),
+                        targetCount: Math.max(1, Number(e.target.value) || 3),
+                      },
+                    })
+                  }
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                  نسبة التخفيض الترحيبي للصديق المحال (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={settingsConfig.referral?.friendDiscountPercent ?? 10}
+                  onChange={(e) =>
+                    setSettingsConfig({
+                      ...settingsConfig,
+                      referral: {
+                        ...(settingsConfig.referral ?? {
+                          enabled: true,
+                          targetCount: 3,
+                          friendDiscountPercent: 10,
+                        }),
+                        friendDiscountPercent: Math.min(
+                          100,
+                          Math.max(0, Number(e.target.value) || 0)
+                        ),
+                      },
+                    })
+                  }
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100">
             <label className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
               <input
@@ -517,6 +695,181 @@ export default function AdminDashboardPage() {
             </button>
           </div>
         </form>
+      )}
+
+      {/* Promo Codes Management Panel (1% to 100% Free) */}
+      {showPromos && (
+        <section className="bg-white border-2 border-emerald-200 rounded-2xl p-5 sm:p-6 shadow-sm space-y-5">
+          <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100">
+            <div>
+              <h2 className="text-base font-extrabold text-navy-800 flex items-center gap-2">
+                <Tag className="w-4 h-4 text-emerald-600" />
+                إدارة أكواد البرومو (تخفيض من 1% حتى 100% مجاني)
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                أنشئ أكواد إطلاق (مثل LAUNCH40) أو أكواد 100% مجانية لمندوبي الدفعات (مثل VIP100)، وتابع أكواد المكافآت الصادرة تلقائيا من الإحالات.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPromos(false)}
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {promoMsg && (
+            <div
+              className={`p-3 rounded-xl text-xs font-bold border ${
+                promoMsg.type === "ok"
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                  : "bg-red-50 border-red-200 text-red-700"
+              }`}
+            >
+              {promoMsg.text}
+            </div>
+          )}
+
+          <form
+            onSubmit={handleCreatePromo}
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200"
+          >
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                الكود (إنجليزي/أرقام)
+              </label>
+              <input
+                required
+                type="text"
+                dir="ltr"
+                value={newPromoCode}
+                onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
+                placeholder="UFC100 أو LAUNCH40"
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold uppercase"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                نسبة الخصم (1–100%)
+              </label>
+              <input
+                required
+                type="number"
+                min={1}
+                max={100}
+                value={newPromoPct}
+                onChange={(e) => setNewPromoPct(e.target.value)}
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono font-bold"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                أقصى عدد استخدامات (0=مفتوح)
+              </label>
+              <input
+                type="number"
+                min={0}
+                value={newPromoMaxUses}
+                onChange={(e) => setNewPromoMaxUses(e.target.value)}
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                ملاحظة (اختياري)
+              </label>
+              <input
+                type="text"
+                value={newPromoNote}
+                onChange={(e) => setNewPromoNote(e.target.value)}
+                placeholder="مندوب دفعة M2..."
+                className="w-full px-2.5 py-2 rounded-lg border border-slate-300 bg-white text-xs"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={savingPromo}
+              className="inline-flex items-center justify-center gap-1.5 py-2 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs"
+            >
+              <Plus className="w-4 h-4" />
+              {savingPromo ? "جاري الإنشاء..." : "إنشاء الكود"}
+            </button>
+          </form>
+
+          {promos.length === 0 ? (
+            <p className="text-xs text-slate-400 text-center py-4">
+              لا توجد أكواد برومو حاليا. أنشئ أول كود خصم (مثلا UFC40 أو VIP100) من النموذج أعلاه.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table dir="rtl" className="w-full text-xs text-right">
+                <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                  <tr>
+                    <th className="px-3 py-2 font-bold">الكود</th>
+                    <th className="px-3 py-2 font-bold text-center">الخصم</th>
+                    <th className="px-3 py-2 font-bold text-center">الاستخدام</th>
+                    <th className="px-3 py-2 font-bold">المصدر والملاحظة</th>
+                    <th className="px-3 py-2 font-bold text-center">الحالة</th>
+                    <th className="px-3 py-2 font-bold text-center">إجراء</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {promos.map((p) => (
+                    <tr key={p.code}>
+                      <td className="px-3 py-2.5 font-mono font-black text-navy-800">
+                        {p.code}
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        <span
+                          className={`px-2 py-0.5 rounded-full font-extrabold ${
+                            p.discountPercent === 100
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-amber-100 text-amber-800"
+                          }`}
+                        >
+                          {p.discountPercent}%
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-center font-mono">
+                        {p.usedCount} / {p.maxUses === 0 ? "∞" : p.maxUses}
+                      </td>
+                      <td className="px-3 py-2.5 text-slate-600">
+                        <span className="font-bold ml-1">
+                          {p.source === "referral_reward" ? "🎁 مكافأة إحالة:" : "إداري:"}
+                        </span>
+                        {p.note || "—"}
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePromo(p.code, p.active)}
+                          className={`px-2.5 py-0.5 rounded-full font-bold ${
+                            p.active
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {p.active ? "مفعل" : "متوقف"}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePromo(p.code)}
+                          className="p-1 text-red-500 hover:bg-red-50 rounded"
+                          title="حذف الكود"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
 
       {/* KPI Cards */}

@@ -26,6 +26,7 @@ export async function PUT(req: Request) {
       currency: body.currency,
       previewLockEnabled: body.previewLockEnabled,
       supportWhatsapp: body.supportWhatsapp,
+      referral: body.referral,
       payment: body.payment,
       packages: body.packages,
     });

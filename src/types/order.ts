@@ -31,11 +31,30 @@ export interface PricingPackage {
   highlighted?: boolean;
 }
 
+export interface ReferralConfig {
+  enabled: boolean;
+  targetCount: number; // e.g. 3 paid referrals = 1 free 100% promo code
+  friendDiscountPercent: number; // e.g. 10% welcome discount for referred friend
+}
+
+export interface PromoCodeEntry {
+  code: string; // uppercase trimmed
+  discountPercent: number; // 1..100
+  maxUses: number; // 0 = unlimited
+  usedCount: number;
+  active: boolean;
+  note?: string;
+  source?: "admin" | "referral_reward";
+  ownerOrderId?: string;
+  createdAt: string;
+}
+
 export interface PublicAppConfig {
   currency: string;
   packages: PricingPackage[];
   cohortMaxSlots: number;
   previewLockEnabled: boolean;
+  referral: ReferralConfig;
   payment: {
     baridimobRip: string;
     ccpAccount: string;
@@ -232,6 +251,13 @@ export interface StudentOrder {
   strictReferencesOnly: boolean;
   usedLibraryRefCount?: number;
   packageId?: PackageId;
+  originalPriceDzd?: number;
+  discountPercent?: number;
+  discountAmountDzd?: number;
+  promoCodeUsed?: string;
+  referralCode?: string;
+  referredByCode?: string;
+  rewardPromoCodes?: string[];
   priceDzd?: number;
   paymentStatus?: PaymentStatus;
   paymentReceipt?: PaymentReceiptMeta | null;

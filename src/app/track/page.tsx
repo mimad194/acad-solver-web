@@ -1,6 +1,7 @@
 "use client";
 
 import React, { Suspense, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { upload } from "@vercel/blob/client";
 import {
@@ -12,6 +13,7 @@ import {
   Download,
   FileCheck2,
   FileUp,
+  Gift,
   HelpCircle,
   Lock,
   MessageCircle,
@@ -55,6 +57,17 @@ interface TrackedOrder {
   solution: SolutionDocument | null;
 }
 
+interface ReferralStats {
+  enabled: boolean;
+  referralCode: string;
+  targetCount: number;
+  friendDiscountPercent: number;
+  qualifiedCount: number;
+  pendingCount: number;
+  remainingForNextReward: number;
+  rewardPromoCodes: Array<{ code: string; used: boolean }>;
+}
+
 const STEPS: Array<{ key: OrderStatus; label: string; desc: string }> = [
   { key: "pending", label: "تم استلام الطلب", desc: "الطلب مسجل وبانتظار مراجعة المشرف" },
   { key: "in_review", label: "قيد الإعداد والمراجعة", desc: "يجري حل النشاط وتدقيق المعادلات والجداول" },
@@ -79,12 +92,14 @@ function TrackContent() {
   const [error, setError] = useState("");
   const [order, setOrder] = useState<TrackedOrder | null>(null);
   const [config, setConfig] = useState<PublicAppConfig | null>(null);
+  const [referralStats, setReferralStats] = useState<ReferralStats | null>(null);
 
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [referenceNote, setReferenceNote] = useState("");
   const [uploadingReceipt, setUploadingReceipt] = useState(false);
   const [receiptMsg, setReceiptMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [copiedRip, setCopiedRip] = useState(false);
+  const [copiedRef, setCopiedRef] = useState(false);
 
   const fetchOrder = useCallback(async (targetCode: string) => {
     const clean = targetCode.trim();
@@ -99,10 +114,12 @@ function TrackContent() {
       const data = await res.json();
       if (!res.ok) {
         setOrder(null);
+        setReferralStats(null);
         throw new Error(data.error || "الطلب غير موجود.");
       }
       setOrder(data.order);
       if (data.config) setConfig(data.config);
+      setReferralStats(data.referralStats ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "تعذر البحث عن الطلب.");
     } finally {
@@ -368,6 +385,135 @@ function TrackContent() {
               </div>
             )}
           </section>
+
+          {/* Viral Referral Progress & 100% Free Reward Card */}
+          {referralStats?.enabled && referralStats.referralCode && (
+            <section className="bg-gradient-to-l from-emerald-50/80 via-white to-amber-50/70 border border-emerald-200 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-emerald-100">
+                <h3 className="text-base font-extrabold text-emerald-900 flex items-center gap-2">
+                  <Gift className="w-5 h-5 text-emerald-600" />
+                  برنامج الإحالات: ادعُ {referralStats.targetCount} زملاء = نشاط مجاني 100%
+                </h3>
+                <span className="text-xs font-extrabold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800">
+                  {referralStats.qualifiedCount} إحالة مؤكدة
+                  {referralStats.pendingCount > 0
+                    ? ` (+${referralStats.pendingCount} قيد الانتظار)`
+                    : ""}
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-slate-600">
+                  <span>
+                    تقدّمك نحو النشاط المجاني القادم (تبقّت{" "}
+                    <strong className="text-emerald-800">
+                      {referralStats.remainingForNextReward}
+                    </strong>{" "}
+                    إحالات مدفوعة)
+                  </span>
+                  <span className="font-bold text-navy-800">
+                    {referralStats.qualifiedCount % referralStats.targetCount} /{" "}
+                    {referralStats.targetCount}
+                  </span>
+                </div>
+                <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-600 rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        ((referralStats.qualifiedCount % referralStats.targetCount) /
+                          referralStats.targetCount) *
+                          100
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  كل زميل يسجّل عبر رابطك يستفيد من خصم فوري{" "}
+                  <strong>{referralStats.friendDiscountPercent}%</strong>، وفور تأكيد دفع{" "}
+                  <strong>{referralStats.targetCount} إحالات</strong> يظهر لك هنا كود مجاني{" "}
+                  <strong>100%</strong> تلقائيا!
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  dir="ltr"
+                  className="font-mono text-xs font-extrabold px-3 py-2 rounded-xl bg-white border border-emerald-200 text-navy-900"
+                >
+                  {referralStats.referralCode}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const url = `${window.location.origin}/?ref=${encodeURIComponent(
+                      referralStats.referralCode
+                    )}`;
+                    await navigator.clipboard.writeText(url);
+                    setCopiedRef(true);
+                    setTimeout(() => setCopiedRef(false), 2000);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-navy-700 hover:bg-navy-600 text-white text-xs font-bold"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  {copiedRef ? "تم نسخ رابط الإحالة ✓" : "نسخ رابط الإحالة"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const url = `${window.location.origin}/?ref=${encodeURIComponent(
+                      referralStats.referralCode
+                    )}`;
+                    const msg = `السلام عليكم، أنصحكم بهذه المنصة لإعداد وتنسيق أنشطة UFC في ملف Word RTL أصلي وفق مطبوعات الأستاذ. استعملوا رابطي للحصول على خصم ${referralStats.friendDiscountPercent}%:\n${url}`;
+                    window.open(
+                      `https://wa.me/?text=${encodeURIComponent(msg)}`,
+                      "_blank",
+                      "noopener,noreferrer"
+                    );
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  مشاركة الرابط في مجموعات WhatsApp
+                </button>
+              </div>
+
+              {referralStats.rewardPromoCodes.length > 0 && (
+                <div className="p-4 rounded-xl bg-white border-2 border-emerald-300 space-y-2">
+                  <p className="text-xs font-extrabold text-emerald-900">
+                    🎉 مكافآتك المجانية (خصم 100% — نشاط كامل مجانا):
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {referralStats.rewardPromoCodes.map((rc) => (
+                      <div
+                        key={rc.code}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs ${
+                          rc.used
+                            ? "bg-slate-50 border-slate-200 text-slate-400 line-through"
+                            : "bg-emerald-50 border-emerald-300 text-emerald-900 font-bold"
+                        }`}
+                      >
+                        <span dir="ltr" className="font-mono font-black">
+                          {rc.code}
+                        </span>
+                        {rc.used ? (
+                          <span className="text-[10px]">(مستخدم)</span>
+                        ) : (
+                          <Link
+                            href={`/?promo=${encodeURIComponent(rc.code)}`}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold"
+                          >
+                            استعمله الآن مجانا ←
+                          </Link>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
 
           {/* BaridiMob / CCP Payment & Receipt Upload Box */}
           {showPaymentCard && (

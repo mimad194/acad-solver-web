@@ -9,6 +9,12 @@ import { sendTelegramAlert } from "@/lib/notify";
 import { findCourseLibraryEntry } from "@/lib/course-library";
 import { findCatalogSpecialty, formatSpecialtyDisplay } from "@/lib/ufc-catalog";
 import {
+  generateReferralCode,
+  incrementPromoUsage,
+  normalizeCode,
+  validatePromoOrReferralCode,
+} from "@/lib/promo-referral";
+import {
   AcademicCycle,
   AcademicYearCode,
   PackageId,
@@ -41,6 +47,8 @@ interface JsonOrderPayload {
   includeCoverPage?: boolean;
   strictReferencesOnly?: boolean;
   packageId?: PackageId;
+  promoCode?: string;
+  referredByCode?: string;
   uploadedFiles?: UploadedFileMeta[];
 }
 
@@ -61,6 +69,8 @@ export async function POST(req: Request) {
     let includeCoverPage = false;
     let strictReferencesOnly = true;
     let requestedPackageId: PackageId | undefined;
+    let promoCodeInput = "";
+    let referredByInput = "";
     const savedFiles: UploadedFileMeta[] = [];
 
     if (contentType.includes("application/json")) {
@@ -87,6 +97,8 @@ export async function POST(req: Request) {
       includeCoverPage = Boolean(body.includeCoverPage);
       strictReferencesOnly = body.strictReferencesOnly !== false;
       requestedPackageId = body.packageId;
+      promoCodeInput = String(body.promoCode ?? "").trim();
+      referredByInput = String(body.referredByCode ?? "").trim();
       if (Array.isArray(body.uploadedFiles)) {
         for (const f of body.uploadedFiles) {
           if (f && f.blobUrl && f.originalName) {
@@ -132,6 +144,8 @@ export async function POST(req: Request) {
       if (rawPkg === "standard" || rawPkg === "premium" || rawPkg === "semester") {
         requestedPackageId = rawPkg;
       }
+      promoCodeInput = String(formData.get("promoCode") ?? "").trim();
+      referredByInput = String(formData.get("referredByCode") ?? "").trim();
 
       const exerciseFiles = formData
         .getAll("exerciseFiles")
@@ -180,6 +194,40 @@ export async function POST(req: Request) {
     const pkg = await resolvePackagePriceAsync(requestedPackageId);
     const cfg = await getPublicAppConfigAsync();
 
+    // Server-side promo / referral discount resolution (never trust client-side price)
+    const originalPriceDzd = pkg.priceDzd;
+    let finalPriceDzd = originalPriceDzd;
+    let discountPercent = 0;
+    let discountAmountDzd = 0;
+    let promoCodeUsed: string | undefined;
+    let resolvedReferredBy: string | undefined;
+
+    const codeToCheck = promoCodeInput || referredByInput;
+    if (codeToCheck) {
+      const check = await validatePromoOrReferralCode(codeToCheck, originalPriceDzd);
+      if (check.valid) {
+        discountPercent = check.discountPercent;
+        discountAmountDzd = check.discountAmountDzd;
+        finalPriceDzd = check.finalPriceDzd;
+        if (check.kind === "promo") {
+          promoCodeUsed = check.code;
+          await incrementPromoUsage(check.code);
+        } else if (check.kind === "referral") {
+          resolvedReferredBy = check.code;
+        }
+      }
+    }
+    // If student also came via ?ref=... link AND typed a separate promo code, preserve referral attribution!
+    if (!resolvedReferredBy && referredByInput) {
+      const refCheck = await validatePromoOrReferralCode(referredByInput, originalPriceDzd);
+      if (refCheck.valid && refCheck.kind === "referral") {
+        resolvedReferredBy = refCheck.code;
+      }
+    }
+
+    const myReferralCode = generateReferralCode();
+    const initialPaymentStatus = finalPriceDzd === 0 ? "waived" : "unpaid";
+
     const order = await createOrder({
       studentName,
       contact,
@@ -197,10 +245,17 @@ export async function POST(req: Request) {
       strictReferencesOnly,
       usedLibraryRefCount: libraryRefCount,
       packageId: pkg.packageId,
-      priceDzd: pkg.priceDzd,
-      paymentStatus: "unpaid",
+      originalPriceDzd,
+      discountPercent,
+      discountAmountDzd,
+      promoCodeUsed,
+      referralCode: myReferralCode,
+      referredByCode: resolvedReferredBy ? normalizeCode(resolvedReferredBy) : undefined,
+      rewardPromoCodes: [],
+      priceDzd: finalPriceDzd,
+      paymentStatus: initialPaymentStatus,
       paymentReceipt: null,
-      paidAt: null,
+      paidAt: finalPriceDzd === 0 ? new Date().toISOString() : null,
       files: savedFiles,
     });
 
@@ -211,8 +266,11 @@ export async function POST(req: Request) {
         `الطالب: ${order.studentName}${order.contact ? ` (${order.contact})` : ""}\n` +
         `المسار: ${resolvedSpecialtyText || "غير محدد"}\n` +
         `المقياس: ${order.moduleName} — ${order.assignmentTitle}\n` +
-        `الباقة: ${pkg.packageName} (${pkg.priceDzd} ${cfg.currency})\n` +
-        `المرفقات: ${savedFiles.length} ملف` +
+        `الباقة: ${pkg.packageName} — الصافي: ${finalPriceDzd} ${cfg.currency}` +
+        (discountPercent > 0
+          ? ` (خصم ${discountPercent}% ${promoCodeUsed ? `بكود ${promoCodeUsed}` : resolvedReferredBy ? `بإحالة ${resolvedReferredBy}` : ""})`
+          : "") +
+        `\nالمرفقات: ${savedFiles.length} ملف` +
         (libraryRefCount > 0 ? ` (+ ${libraryRefCount} مرجع تلقائي من المكتبة)` : "") +
         `\nالإدارة: ${origin}/admin/orders/${order.id}`
     );
@@ -221,8 +279,11 @@ export async function POST(req: Request) {
       {
         id: order.id,
         trackingCode: order.trackingCode,
+        referralCode: order.referralCode,
         status: order.status,
         packageId: order.packageId,
+        originalPriceDzd: order.originalPriceDzd,
+        discountPercent: order.discountPercent,
         priceDzd: order.priceDzd,
         paymentStatus: order.paymentStatus,
       },
