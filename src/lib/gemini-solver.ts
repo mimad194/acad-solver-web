@@ -1,6 +1,17 @@
 import crypto from "crypto";
-import { DocumentBlock, SolutionDocument, StudentOrder } from "@/types/order";
-import { readUploadedFileBuffer } from "./store";
+import type {
+  DocumentBlock,
+  DocxThemeId,
+  SolutionDocument,
+  StudentOrder,
+  StyleProfileId,
+} from "@/types/order";
+import { listOrders, readUploadedFileBuffer } from "./store";
+import {
+  extractProseText,
+  getStyleProfile,
+  pickAutoStyleAndTheme,
+} from "./style-profiles";
 
 const SUPPORTED_INLINE_MIMES = new Set([
   "application/pdf",
@@ -56,7 +67,10 @@ async function discoverExactModelIds(
         const disp = (m.displayName ?? "").toLowerCase();
         const idLow = id.toLowerCase();
         if (
-          patterns.some((p) => disp === p || idLow === p || disp.includes(p) || idLow.includes(p))
+          patterns.some(
+            (p) =>
+              disp === p || idLow === p || disp.includes(p) || idLow.includes(p)
+          )
         ) {
           if (id && !matched.includes(id)) {
             matched.push(id);
@@ -113,20 +127,64 @@ async function uploadToGeminiFilesApi(
   }
 }
 
-function buildSystemInstruction(order: StudentOrder, extraInstruction?: string): string {
+async function collectSiblingSnippets(order: StudentOrder): Promise<string[]> {
+  try {
+    const all = await listOrders();
+    const normMod = order.moduleName.trim().toLowerCase();
+    const siblings = all
+      .filter(
+        (o) =>
+          o.id !== order.id &&
+          o.solution &&
+          o.moduleName.trim().toLowerCase() === normMod
+      )
+      .slice(0, 2);
+
+    return siblings
+      .map((s) => extractProseText(s.solution!).slice(0, 900).trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function buildSystemInstruction(
+  order: StudentOrder,
+  styleId: StyleProfileId,
+  siblingSnippets: string[],
+  extraInstruction?: string
+): string {
+  const style = getStyleProfile(styleId);
   const strictRule = order.strictReferencesOnly
-    ? "- اعتمد حصريا وبشكل صارم على المراجع والمطبوعات والدروس المرفقة مع الطلب فقط (القوانين، الرموز، سلالم التفسير، وطريقة الحل)، دون أي توسع أو استيراد مصطلحات أو طرق من خارج المراجع المرفوعة."
-    : "- اعتمد أساسا على المراجع المرفقة مع الطلب مع إمكانية التوضيح المنهجي عند الضرورة.";
+    ? "- اعتمد حصريا وبشكل صارم على المراجع والمطبوعات والدروس المرفقة مع الطلب فقط (القوانين، الرموز، سلالم التفسير، وطريقة الحل)، دون أي توسع أو استيراد طرق أو مصطلحات من خارج المراجع المرفوعة."
+    : "- اعتمد أساسا على المراجع المرفقة مع الطلب مع التوضيح المنهجي الدقيق عند الضرورة.";
 
-  return `أنت أستاذ وخبير أكاديمي متخصص في إعداد وتنسيق حلول الأنشطة والأعمال الموجهة للطلبة الجامعيين باللغة العربية الفصحى السليمة.
+  const antiDuplicateSection =
+    siblingSnippets.length > 0
+      ? `\nتنويع الصياغة ومنع التكرار داخل نفس الدفعة:
+سبق إعداد حلول أخرى في نفس المقياس، لذلك يُشترط ألا تعيد استخدام نفس التراكيب اللغوية أو افتتاحيات الفقرات أو نفس صياغة التعليقات الواردة في المقتطفات المرجعية التالية (حافظ على صحة الأرقام والقوانين فقط، وغيّر كليا أسلوب الصياغة وبنية العرض والربط بين الأفكار):
+${siblingSnippets.map((s, i) => `--- مقتطف أسلوب سابق (${i + 1}) يجب الابتعاد عن صياغته ---\n${s}`).join("\n")}\n`
+      : "";
 
-المطلوب منك حل النشاط التالي بدقة علمية ورياضية كاملة وإخراج الحل في صيغة JSON مهيكلة لتتحول مباشرة إلى ملف Word عربي RTL احترافي.
+  return `أنت أستاذ جامعي وباحث متخصص في إعداد حلول الأنشطة والأعمال الموجهة لطلبة الماستر باللغة العربية الأكاديمية الأصيلة.
 
-قواعد أساسية إلزامية:
+المطلوب إعداد حل شامل، دقيق، مفصّل، ومُعدّ خصيصا لهذا الطلب بصيغة JSON مهيكلة لتتحول مباشرة إلى ملف Word عربي RTL احترافي.
+
+1) قواعد الشمولية والدقة العلمية (إلزامية — ممنوع الاختصار):
 ${strictRule}
-- اكتب بأسلوب طالب جامعي متمكن (أسلوب أكاديمي طبيعي ومباشر وواضح، بعيد تماما عن الصياغات النمطية الآلية أو الحشو الإنشائي أو الرموز التزيينية).
-- تحقق من جميع العمليات الحسابية والرقمية خطوة بخطوة بدقة عالية قبل كتابة النتيجة.
-- اكتب كل المعادلات الرياضية والإحصائية بصيغة LaTeX قياسية ونظيفة:
+- أجب عن **كل تمرين وكل سؤال وكل فرع** واردة في نص التمرين أو ملفه دون حذف أو اختصار أي مطلوب.
+- أدرج جميع **الجداول الحسابية الوسيطة** كاملة بجميع صفوفها وصف المجموع (مثل جدول الانحرافات، جدول القيم المقدرة والبواقي، جدول تحليل التباين ANOVA، جدول اختبارات المعنوية... إلخ متى تطلب التمرين ذلك).
+- في كل خطوة حسابية: اعرض القانون الرمزي أولا، ثم التعويض العددي الواضح، ثم النتيجة النهائية (مع تقريب متسق إلى ${style.suggestedDecimals} أرقام بعد الفاصلة عند الحاجة)، وتحقّق رياضيا من كل جمع وطرح وضرب وقسمة قبل كتابة النتيجة.
+- قدّم تحليلا وتفسيرا أكاديميا وإداريا/اقتصاديا وافيا بعد كل نتيجة رقمية بالاستناد إلى سلم التفسير الوارد في المراجع المرفوعة.
+
+2) قواعد الأسلوب الأكاديمي الطبيعي والأصالة اللغوية:
+- نمط التحرير المختار لهذا الطلب (${style.label}): ${style.promptDirective}
+- اكتب بلغة طالب جامعي متمكن يعبّر بأسلوب طبيعي مباشر وهادئ، مع **تفاوت طبيعي في طول الجمل** (مزيج متوازن بين الجمل القصيرة الحاسمة والجمل التحليلية المركبة) وربط مباشر بأرقام ووقائع الحالة المدروسة.
+- يُمنع منعا باتا استخدام الكليشيهات النمطية الآلية المكررة مثل: ("في الختام"، "تجدر الإشارة إلى أنه"، "مما لا شك فيه"، "يتضح جليا"، "بناءً على ما سبق يتبين"، "يُعدّ ... ركيزة أساسية"، "من الجدير بالذكر"، "في عالم الأعمال المعاصر") أو الرموز التعبيرية أو التماثل الرتيب في بداية الفقرات.
+- عند وجود أكثر من صيغة رياضية متكافئة داخل المراجع المرفوعة (مثل حساب المعاملات بالانحرافات أو بالمجاميع الخام، أو حساب معامل التحديد عبر SCE/SCT أو 1-SCR/SCT)، اختر الصيغة الأنسب لهذا الأسلوب لتنويع طريقة العرض المنهجية مع ضمان تطابق النتائج الرياضية تماما.
+${antiDuplicateSection}
+3) قواعد تنسيق المعادلات والجداول ومخطط JSON:
+- اكتب جميع المعادلات الرياضية والإحصائية بصيغة LaTeX قياسية ونظيفة:
   * داخل الفقرات والنقاط وخلايا الجداول: ضع الرموز والمعادلات القصيرة بين علامتي دولار مفردتين مثل $\\hat{\\beta}_1 = 16.7302$ أو $R^2 = 99.40\\%$.
   * للمعادلات المستقلة: استخدم كتلة من نوع "equation" وضع فيها نص LaTeX فقط (بدون $$ وبدون أي أحرف عربية داخل نص LaTeX).
   * عند كتابة الجداول: رتب الأعمدة من اليمين إلى اليسار (أول عمود في المصفوفة سيظهر أقصى اليمين في Word RTL).
@@ -144,13 +202,19 @@ ${strictRule}
     { "type": "table", "caption": "عنوان الجدول اختياري", "headers": ["عمود 1", "$X_1$"], "rows": [["قيمة", "10"]], "hasTotalRow": true }
   ]
 }
-${extraInstruction ? `\nتوجيه إضافي من المشرف:\n${extraInstruction}` : ""}`;
+${extraInstruction ? `\nتوجيه إضافي خاص من المشرف:\n${extraInstruction}` : ""}`;
+}
+
+export interface GenerateOptions {
+  extraInstruction?: string;
+  preferredModel?: string;
+  styleProfile?: StyleProfileId;
+  docxTheme?: DocxThemeId;
 }
 
 export async function generateSolutionWithGemini(
   order: StudentOrder,
-  extraInstruction?: string,
-  preferredModel?: string
+  options: GenerateOptions = {}
 ): Promise<{ solution: SolutionDocument; usedModel: string }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -159,10 +223,16 @@ export async function generateSolutionWithGemini(
     );
   }
 
+  const auto = pickAutoStyleAndTheme(`${order.id}-${order.trackingCode}`);
+  const chosenStyle: StyleProfileId = options.styleProfile ?? auto.styleProfile;
+  const chosenTheme: DocxThemeId = options.docxTheme ?? auto.docxTheme;
+
   const firstChoice =
-    preferredModel?.trim() ||
+    options.preferredModel?.trim() ||
     process.env.GEMINI_MODEL?.trim() ||
     "gemini-4-hydrogen";
+
+  const siblingSnippets = await collectSiblingSnippets(order);
 
   const parts: Array<Record<string, unknown>> = [];
 
@@ -226,21 +296,33 @@ export async function generateSolutionWithGemini(
   }
 
   parts.push({
-    text: "قم الآن بحل التمرين كاملا وإرجاع JSON المهيكَل فقط وفق المخطط المطلوب.",
+    text: "قم الآن بحل التمرين كاملا بكل تفاصيله وجداوله الوسيطة وتحليلاته وفق الأسلوب المطلوب وأعد JSON المهيكَل فقط.",
   });
 
   const requestPayload = JSON.stringify({
     systemInstruction: {
-      parts: [{ text: buildSystemInstruction(order, extraInstruction) }],
+      parts: [
+        {
+          text: buildSystemInstruction(
+            order,
+            chosenStyle,
+            siblingSnippets,
+            options.extraInstruction
+          ),
+        },
+      ],
     },
     contents: [{ role: "user", parts }],
     generationConfig: {
-      temperature: 0.2,
+      temperature: 0.45,
+      maxOutputTokens: 16384,
       responseMimeType: "application/json",
     },
   });
 
-  const candidateModels = Array.from(new Set([firstChoice, ...DEFAULT_MODEL_PRIORITY]));
+  const candidateModels = Array.from(
+    new Set([firstChoice, ...DEFAULT_MODEL_PRIORITY])
+  );
   let discoveredOnce = false;
   let response: Response | null = null;
   let lastErrorText = "";
@@ -265,7 +347,6 @@ export async function generateSolutionWithGemini(
 
     lastErrorText = await response.text();
 
-    // If model slug not found (e.g. requires -preview suffix), discover exact live IDs from Google's models list
     if (response.status === 404 && !discoveredOnce) {
       discoveredOnce = true;
       const discovered = await discoverExactModelIds(apiKey, [
@@ -280,7 +361,6 @@ export async function generateSolutionWithGemini(
       }
     }
 
-    // Fallback to next candidate model on 404 (unavailable/retired), 429 (quota), or 500/502/503/504 (high demand / transient error)
     if (
       response.status === 404 ||
       response.status === 429 ||
@@ -358,6 +438,8 @@ export async function generateSolutionWithGemini(
   const solution: SolutionDocument = {
     title: parsed.title || `حل ${order.assignmentTitle}`,
     includeCoverPage: order.includeCoverPage,
+    styleProfile: chosenStyle,
+    docxTheme: chosenTheme,
     coverMeta: {
       university: order.university,
       specialty: order.specialty,

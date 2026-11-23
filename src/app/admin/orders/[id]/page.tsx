@@ -11,13 +11,42 @@ import {
   FileDown,
   FilePlus,
   FileText,
+  Palette,
+  RefreshCw,
   Save,
+  ShieldCheck,
   Sparkles,
   AlertCircle,
 } from "lucide-react";
-import { OrderStatus, SolutionDocument, StudentOrder } from "@/types/order";
+import {
+  DocxThemeId,
+  OrderStatus,
+  SolutionDocument,
+  StudentOrder,
+  StyleProfileId,
+} from "@/types/order";
+import {
+  DOCX_THEMES,
+  STYLE_PROFILES,
+  pickAutoStyleAndTheme,
+} from "@/lib/style-profiles";
 import SolutionPreview from "@/components/SolutionPreview";
 import BlockEditor from "@/components/BlockEditor";
+
+interface SimilarityMatch {
+  id: string;
+  trackingCode: string;
+  studentName: string;
+  similarity: number;
+}
+
+interface SimilarityReport {
+  maxSimilarity: number;
+  comparedCount: number;
+  matches: SimilarityMatch[];
+}
+
+const THEME_LIST = Object.values(DOCX_THEMES);
 
 export default function AdminOrderWorkspacePage({
   params,
@@ -31,12 +60,31 @@ export default function AdminOrderWorkspacePage({
   const [adminNote, setAdminNote] = useState("");
   const [extraInstruction, setExtraInstruction] = useState("");
   const [selectedModel, setSelectedModel] = useState("gemini-4-hydrogen");
+  const [styleProfile, setStyleProfile] = useState<StyleProfileId>("analytical_narrative");
+  const [docxTheme, setDocxTheme] = useState<DocxThemeId>("classic_navy");
+  const [similarity, setSimilarity] = useState<SimilarityReport | null>(null);
+  const [checkingSim, setCheckingSim] = useState(false);
   const [activeTab, setActiveTab] = useState<"preview" | "edit">("preview");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  const loadSimilarity = useCallback(async (orderId: string) => {
+    setCheckingSim(true);
+    try {
+      const res = await fetch(`/api/orders/${orderId}/similarity`);
+      if (res.ok) {
+        const data = (await res.json()) as SimilarityReport;
+        setSimilarity(data);
+      }
+    } catch {
+      // ignore non-fatal similarity check error
+    } finally {
+      setCheckingSim(false);
+    }
+  }, []);
 
   const loadOrder = useCallback(async () => {
     setLoading(true);
@@ -49,10 +97,18 @@ export default function AdminOrderWorkspacePage({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "تعذر تحميل الطلب");
       const o = data.order as StudentOrder;
+      const autoPick = pickAutoStyleAndTheme(`${o.id}-${o.trackingCode}`);
       setOrder(o);
       setSolution(o.solution);
       setStatus(o.status);
       setAdminNote(o.adminNote);
+      setStyleProfile(o.solution?.styleProfile ?? autoPick.styleProfile);
+      setDocxTheme(o.solution?.docxTheme ?? autoPick.docxTheme);
+      if (o.solution) {
+        void loadSimilarity(o.id);
+      } else {
+        setSimilarity(null);
+      }
     } catch (err) {
       setMessage({
         type: "err",
@@ -61,7 +117,7 @@ export default function AdminOrderWorkspacePage({
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, loadSimilarity]);
 
   useEffect(() => {
     loadOrder();
@@ -72,6 +128,9 @@ export default function AdminOrderWorkspacePage({
     setSaving(true);
     setMessage(null);
     const nextStatus = overrideStatus ?? status;
+    const solutionToSave = solution
+      ? { ...solution, styleProfile, docxTheme }
+      : null;
     try {
       const res = await fetch(`/api/orders/${order.id}`, {
         method: "PATCH",
@@ -79,7 +138,7 @@ export default function AdminOrderWorkspacePage({
         body: JSON.stringify({
           status: nextStatus,
           adminNote,
-          solution,
+          solution: solutionToSave,
         }),
       });
       const data = await res.json();
@@ -87,6 +146,9 @@ export default function AdminOrderWorkspacePage({
       setOrder(data.order);
       setStatus(data.order.status);
       setSolution(data.order.solution);
+      if (data.order.solution) {
+        void loadSimilarity(order.id);
+      }
       setMessage({
         type: "ok",
         text:
@@ -104,25 +166,42 @@ export default function AdminOrderWorkspacePage({
     }
   };
 
-  const handleGenerateAi = async () => {
+  const handleGenerateAi = async (
+    overrideStyle?: StyleProfileId,
+    overrideTheme?: DocxThemeId
+  ) => {
     if (!order) return;
+    const targetStyle = overrideStyle ?? styleProfile;
+    const targetTheme = overrideTheme ?? docxTheme;
     setGenerating(true);
     setMessage(null);
     try {
       const res = await fetch(`/api/orders/${order.id}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ extraInstruction, model: selectedModel }),
+        body: JSON.stringify({
+          extraInstruction,
+          model: selectedModel,
+          styleProfile: targetStyle,
+          docxTheme: targetTheme,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "فشل توليد الحل آليا.");
       setOrder(data.order);
       setSolution(data.order.solution);
       setStatus(data.order.status);
+      if (data.order.solution?.styleProfile) {
+        setStyleProfile(data.order.solution.styleProfile);
+      }
+      if (data.order.solution?.docxTheme) {
+        setDocxTheme(data.order.solution.docxTheme);
+      }
       setActiveTab("preview");
+      void loadSimilarity(order.id);
       setMessage({
         type: "ok",
-        text: `تم توليد مسودة الحل بنجاح عبر النموذج (${data.usedModel || selectedModel}). راجعها وعدّل ما يلزم ثم اعتمد التسليم.`,
+        text: `تم توليد مسودة الحل بنجاح عبر النموذج (${data.usedModel || selectedModel}) بالأسلوب المختار. راجعها وعدّل ما يلزم ثم اعتمد التسليم.`,
       });
     } catch (err) {
       setMessage({
@@ -134,12 +213,31 @@ export default function AdminOrderWorkspacePage({
     }
   };
 
+  const handleThemeChange = (nextTheme: DocxThemeId) => {
+    setDocxTheme(nextTheme);
+    if (solution) {
+      setSolution({ ...solution, docxTheme: nextTheme });
+    }
+  };
+
+  const handleRegenerateDistinct = () => {
+    const curStyleIdx = STYLE_PROFILES.findIndex((s) => s.id === styleProfile);
+    const nextStyle = STYLE_PROFILES[(curStyleIdx + 1) % STYLE_PROFILES.length].id;
+    const curThemeIdx = THEME_LIST.findIndex((t) => t.id === docxTheme);
+    const nextTheme = THEME_LIST[(curThemeIdx + 1) % THEME_LIST.length].id;
+    setStyleProfile(nextStyle);
+    setDocxTheme(nextTheme);
+    void handleGenerateAi(nextStyle, nextTheme);
+  };
+
   const createManualTemplate = () => {
     if (!order) return;
     const now = new Date().toISOString();
     setSolution({
       title: `حل ${order.assignmentTitle}`,
       includeCoverPage: order.includeCoverPage,
+      styleProfile,
+      docxTheme,
       coverMeta: {
         university: order.university,
         specialty: order.specialty,
@@ -339,7 +437,7 @@ export default function AdminOrderWorkspacePage({
               توليد الحل بالذكاء الاصطناعي (Gemini)
             </h2>
             <p className="text-xs text-slate-600 leading-relaxed">
-              يقرأ ملفات التمرين والمراجع المرفوعة، ويولّد مسودة حل كاملة مهيكلة بالجداول والمعادلات لتراجعها وتعتمدها.
+              يقرأ ملفات التمرين والمراجع المرفوعة، ويولّد مسودة حل كاملة مهيكلة بالجداول والمعادلات مع تفادي تكرار الصياغة بين طلبات نفس الدفعة.
             </p>
             <div>
               <label className="block text-xs font-bold text-slate-600 mb-1">
@@ -361,6 +459,48 @@ export default function AdminOrderWorkspacePage({
                 </option>
               </select>
             </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-600 mb-1">
+                أسلوب الصياغة وبنية التحليل (تنويع الدفعة)
+              </label>
+              <select
+                value={styleProfile}
+                onChange={(e) => setStyleProfile(e.target.value as StyleProfileId)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-navy-600"
+              >
+                {STYLE_PROFILES.map((sp) => (
+                  <option key={sp.id} value={sp.id}>
+                    {sp.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                {STYLE_PROFILES.find((s) => s.id === styleProfile)?.shortDesc}
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-1 text-xs font-bold text-slate-600 mb-1">
+                <Palette className="w-3.5 h-3.5 text-navy-600" />
+                قالب وتنسيق ملف Word (.docx)
+              </label>
+              <select
+                value={docxTheme}
+                onChange={(e) => handleThemeChange(e.target.value as DocxThemeId)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-navy-600"
+              >
+                {THEME_LIST.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                تغيير القالب يغيّر الخط والألوان وتصميم الجداول فورا عند الحفظ دون الحاجة لإعادة التوليد.
+              </p>
+            </div>
+
             <textarea
               rows={2}
               value={extraInstruction}
@@ -370,7 +510,7 @@ export default function AdminOrderWorkspacePage({
             />
             <button
               type="button"
-              onClick={handleGenerateAi}
+              onClick={() => handleGenerateAi()}
               disabled={generating}
               className="w-full inline-flex items-center justify-center gap-2 py-2.5 rounded-xl bg-navy-700 hover:bg-navy-600 disabled:opacity-60 text-white font-bold text-xs shadow-sm"
             >
@@ -378,6 +518,99 @@ export default function AdminOrderWorkspacePage({
               {generating ? "جاري تحليل المراجع وإعداد الحل..." : "توليد الحل الآن عبر Gemini"}
             </button>
           </div>
+
+          {/* Cohort Uniqueness & Similarity Checker */}
+          {solution && (
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                <h2 className="font-extrabold text-navy-800 text-sm flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  فحص التفرد وتشابه الدفعة
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => loadSimilarity(order.id)}
+                  disabled={checkingSim}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
+                  title="تحديث فحص التشابه"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${checkingSim ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+
+              {similarity ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200">
+                    <div>
+                      <p className="text-[11px] text-slate-500">أعلى نسبة تشابه لفظي في نفس المقياس</p>
+                      <p className="text-lg font-extrabold text-slate-800">
+                        {similarity.maxSimilarity}%
+                      </p>
+                    </div>
+                    <span
+                      className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                        similarity.maxSimilarity < 20
+                          ? "bg-emerald-100 text-emerald-800"
+                          : similarity.maxSimilarity < 35
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-red-100 text-red-800"
+                      }`}
+                    >
+                      {similarity.maxSimilarity < 20
+                        ? "تفرد ممتاز"
+                        : similarity.maxSimilarity < 35
+                        ? "تشابه متوسط"
+                        : "تشابه مرتفع"}
+                    </span>
+                  </div>
+
+                  {similarity.comparedCount === 0 ? (
+                    <p className="text-xs text-slate-500 leading-relaxed">
+                      لا توجد طلبات أخرى مكتملة لنفس المقياس حاليا للمقارنة. عند وصول طلبات إضافية من نفس الدفعة، سيقارنها النظام تلقائيا ويتفادى تكرار صياغتها.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-bold text-slate-600">
+                        تمت المقارنة مع {similarity.comparedCount} طلب(ات) في «{order.moduleName}»:
+                      </p>
+                      <ul className="space-y-1">
+                        {similarity.matches.slice(0, 3).map((m) => (
+                          <li
+                            key={m.id}
+                            className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-100"
+                          >
+                            <span className="truncate text-slate-700">
+                              <span dir="ltr" className="font-mono font-bold text-navy-700 ml-1.5">
+                                {m.trackingCode}
+                              </span>
+                              ({m.studentName})
+                            </span>
+                            <span className="font-bold text-slate-800 shrink-0">{m.similarity}%</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-slate-400">جاري فحص التشابه مع طلبات الدفعة...</p>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRegenerateDistinct}
+                disabled={generating}
+                className="w-full inline-flex items-center justify-center gap-1.5 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 font-bold text-xs disabled:opacity-60"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                إعادة الصياغة بأسلوب وقالب مختلفين
+              </button>
+
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                نصيحة قبل الاعتماد: مراجعة الفقرات وتعديل جملتين أو ثلاث بصياغتك الخاصة في تبويب «التحرير» يمنح العمل أعلى درجات الطابع البشري الطبيعي.
+              </p>
+            </div>
+          )}
 
           {/* Status & Admin Note */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
